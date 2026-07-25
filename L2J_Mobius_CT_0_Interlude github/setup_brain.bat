@@ -292,7 +292,7 @@ if errorlevel 1 (
             pause
             exit /b 1
         )
-        echo ==^> Running the Python installer silently (this can take a minute)...
+        echo ==^> Running the Python installer silently ^(this can take a minute^)...
         start /wait "" "%TEMP%\fpc_brain_setup\python-installer.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_pip=1 Include_launcher=1
     ) else (
         echo ==^> Installing Python via winget...
@@ -306,7 +306,7 @@ if errorlevel 1 (
                 pause
                 exit /b 1
             )
-            echo ==^> Running the Python installer silently (this can take a minute)...
+            echo ==^> Running the Python installer silently ^(this can take a minute^)...
             start /wait "" "%TEMP%\fpc_brain_setup\python-installer.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_pip=1 Include_launcher=1
         )
     )
