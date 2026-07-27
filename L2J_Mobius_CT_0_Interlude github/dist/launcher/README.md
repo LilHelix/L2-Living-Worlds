@@ -60,6 +60,28 @@ the servers and the bundled DB down cleanly.
 
 ---
 
+## Updating an existing install (patch zip)
+
+Alongside the full `L2J-Offline-OneClick.zip`, the build also produces a small **`L2J-Offline-Patch.zip`**
+containing only the files that changed this release (`libs\GameServer.jar` plus whatever is listed in
+`patch-manifest.txt`). It exists so a tester who already has the pack installed can update **without
+losing their database**:
+
+1. `Stop-Server.bat`.
+2. Unzip `L2J-Offline-Patch.zip` **over** the existing install folder, overwriting when asked.
+3. `Start-Server.bat`.
+
+The patch carries no `mariadb\` folder, so the player's database (characters, items, adena) is never
+touched. It also deliberately excludes configs a player may have customized (e.g. `Rates.ini`) — new
+config keys are called out in the release notes instead.
+
+**Per release:** edit `dist/launcher/patch-manifest.txt` — clear last release's entries and list the
+datapack/config/html files that changed this time (one path per line, relative to the pack root; the
+jar is auto-included). The build **fails** if a listed file isn't in the pack, so a typo can't ship a
+broken patch. No manifest → the patch step is skipped and only the full pack is produced.
+
+---
+
 ## What the launcher does, in order
 
 1. **Pre-flight** — one screen listing anything missing (Java / DB engine / jars) before it starts.

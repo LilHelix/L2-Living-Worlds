@@ -220,7 +220,71 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 [System.IO.Compression.ZipFile]::CreateFromDirectory($Pack, $outZip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
 $sizeMb = [math]::Round((Get-Item $outZip).Length / 1MB, 1)
 Ok "DONE -> $outZip  ($sizeMb MB)"
+
+# ---- 8. build the incremental patch zip -----------------------------------
+# A tiny companion zip holding ONLY the files that changed this release, for
+# testers who already installed the full pack: they unzip it OVER their install
+# to update without touching their database. The file list lives in
+# patch-manifest.txt (paths relative to the pack root); libs\GameServer.jar is
+# always included, since any code change rebuilds it. No manifest => no patch.
+$manifestPath = Join-Path $LauncherDir 'patch-manifest.txt'
+if (Test-Path $manifestPath) {
+    Info "building incremental patch zip from patch-manifest.txt ..."
+    $patchRoot = Join-Path $Staging 'patch'
+    New-Item -ItemType Directory -Path $patchRoot -Force | Out-Null
+
+    # The freshly built server jar is always part of a patch.
+    $entries = @('libs\GameServer.jar')
+    foreach ($line in (Get-Content $manifestPath)) {
+        $rel = $line.Trim()
+        if ($rel -eq '' -or $rel.StartsWith('#')) { continue }
+        $entries += ($rel -replace '/', '\')   # accept either slash style in the manifest
+    }
+
+    $missing = @()
+    foreach ($rel in ($entries | Select-Object -Unique)) {
+        $src = Join-Path $Pack $rel
+        if (-not (Test-Path $src)) { $missing += $rel; continue }
+        $dst = Join-Path $patchRoot $rel
+        New-Item -ItemType Directory -Path (Split-Path -Parent $dst) -Force | Out-Null
+        Copy-Item -Path $src -Destination $dst -Force
+    }
+    # Fail loudly rather than silently shipping an incomplete patch.
+    if ($missing.Count -gt 0) { Die ("patch-manifest.txt lists files not present in the built pack:`n  " + ($missing -join "`n  ")) }
+
+    $readme = @"
+L2 Living Worlds - update patch
+===============================
+
+This zip contains ONLY the files that changed in this release. It updates an
+EXISTING install WITHOUT touching your database (characters, items, adena).
+
+How to apply:
+  1. Stop the server if it is running (Stop-Server.bat).
+  2. Copy the folders inside this zip into your existing server folder and let
+     them overwrite when asked. The layout matches, so files land in the right
+     place.
+  3. Start the server again (Start-Server.bat).
+
+Your 'mariadb' folder is NOT in this zip, so your database is never overwritten.
+This patch also leaves config files you may have customized (e.g. your rates)
+alone - any new settings this release adds are called out in the release notes.
+"@
+    Set-Content -Path (Join-Path $patchRoot 'PATCH-README.txt') -Value $readme -Encoding ASCII
+
+    $patchZip = Join-Path $OutDir 'L2J-Offline-Patch.zip'
+    if (Test-Path $patchZip) { Remove-Item $patchZip -Force }
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($patchRoot, $patchZip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+    $patchMb = [math]::Round((Get-Item $patchZip).Length / 1MB, 2)
+    Ok "PATCH -> $patchZip  ($patchMb MB)"
+} else {
+    Info "no patch-manifest.txt found next to build-pack.ps1 - skipping the incremental patch zip."
+}
+
 Write-Host ""
-Write-Host "Copy that zip to the test VM, unzip anywhere, and double-click Start-Server.bat." -ForegroundColor Green
+Write-Host "Full pack : unzip anywhere and double-click Start-Server.bat (new testers)." -ForegroundColor Green
+if (Test-Path (Join-Path $OutDir 'L2J-Offline-Patch.zip')) {
+    Write-Host "Patch zip : existing testers unzip OVER their install to update, keeping their DB." -ForegroundColor Green
+}
 Write-Host "Cleaning staging..." -ForegroundColor Gray
 Remove-Item -Path $Staging -Recurse -Force -ErrorAction SilentlyContinue
