@@ -567,6 +567,18 @@ public class PhantomPartyManager
 	}
 
 	/**
+	 * @param member a recruited phantom
+	 * @return the human that recruited {@code member} and is currently partied with it, or {@code null} if the
+	 *         phantom isn't a recruit or hasn't been bound into an owner's party yet. Used to re-attribute a
+	 *         phantom's quest kill credit to its owner, so partied AI don't have to be denied the last hit.
+	 */
+	public Player getRecruitOwner(Player member)
+	{
+		final Member state = (member != null) ? _members.get(member.getObjectId()) : null;
+		return ((state != null) && state.partied) ? state.owner : null;
+	}
+
+	/**
 	 * Binds a recruited member into the inviting player's party (a clientless phantom can't answer the invite
 	 * dialog, so accept it server-side). Called by {@code RequestJoinParty}.
 	 * @return {@code true} if the member joined
