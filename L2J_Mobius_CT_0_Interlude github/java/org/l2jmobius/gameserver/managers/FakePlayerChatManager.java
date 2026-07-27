@@ -913,26 +913,39 @@ public class FakePlayerChatManager implements IXmlReader
 		}
 	}
 	
+	/**
+	 * All non-vendor fake players in the world - the pool allowed to post ambient trade/shout. Trade and shout
+	 * are broadcast to every player globally, so the speaker no longer has to be standing next to someone; drawing
+	 * world-wide keeps global chat alive even when the only player is off in a hunting zone with no bots nearby.
+	 */
+	private List<Npc> collectAmbientSpeakers()
+	{
+		final List<Npc> bots = new ArrayList<>();
+		for (WorldObject object : World.getInstance().getVisibleObjects())
+		{
+			if (object.isNpc())
+			{
+				final Npc npc = object.asNpc();
+				if (npc.isFakePlayer() && !isStoreVendor(npc))
+				{
+					bots.add(npc);
+				}
+			}
+		}
+		return bots;
+	}
+
 	private void ambientTradeChat()
 	{
 		if (!SOCIAL_ENABLED || (MESSAGES_THIS_MINUTE.get() >= MAX_MESSAGES_PER_MINUTE))
 		{
 			return;
 		}
-		final List<Player> players = new ArrayList<>(World.getInstance().getPlayers());
-		if (players.isEmpty())
+		if (World.getInstance().getPlayers().isEmpty())
 		{
 			return; // nobody online to hear it
 		}
-		final Player witness = players.get(Rnd.get(players.size()));
-		final List<Npc> bots = new ArrayList<>();
-		World.getInstance().forEachVisibleObjectInRange(witness, Npc.class, SOCIAL_RANGE, npc ->
-		{
-			if (npc.isFakePlayer() && !isStoreVendor(npc))
-			{
-				bots.add(npc);
-			}
-		});
+		final List<Npc> bots = collectAmbientSpeakers();
 		if (!bots.isEmpty())
 		{
 			botSpeaks(bots.get(Rnd.get(bots.size())), "", "", "AMBIENT", false);
@@ -946,20 +959,11 @@ public class FakePlayerChatManager implements IXmlReader
 		{
 			return;
 		}
-		final List<Player> players = new ArrayList<>(World.getInstance().getPlayers());
-		if (players.isEmpty())
+		if (World.getInstance().getPlayers().isEmpty())
 		{
 			return; // nobody online to hear it
 		}
-		final Player witness = players.get(Rnd.get(players.size()));
-		final List<Npc> bots = new ArrayList<>();
-		World.getInstance().forEachVisibleObjectInRange(witness, Npc.class, SOCIAL_RANGE, npc ->
-		{
-			if (npc.isFakePlayer() && !isStoreVendor(npc))
-			{
-				bots.add(npc);
-			}
-		});
+		final List<Npc> bots = collectAmbientSpeakers();
 		if (!bots.isEmpty())
 		{
 			botSpeaks(bots.get(Rnd.get(bots.size())), "", "", "SHOUTAMBIENT", false);

@@ -46,7 +46,9 @@ public class FakePlayersConfig
 	public static boolean FAKE_PLAYER_AGGRO_FPC;
 	public static boolean FAKE_PLAYER_CAN_DROP_ITEMS;
 	public static boolean FAKE_PLAYER_CAN_PICKUP;
-	
+	public static boolean FAKE_PLAYER_PARTY_QUEST_CREDIT;
+	public static int FAKE_PLAYER_PARTY_QUEST_CREDIT_RANGE;
+
 	public static void load()
 	{
 		final ConfigReader config = new ConfigReader(FAKE_PLAYERS_CONFIG_FILE);
@@ -64,5 +66,7 @@ public class FakePlayersConfig
 		FAKE_PLAYER_AGGRO_FPC = config.getBoolean("FakePlayerAggroFPC", false);
 		FAKE_PLAYER_CAN_DROP_ITEMS = config.getBoolean("FakePlayerCanDropItems", false);
 		FAKE_PLAYER_CAN_PICKUP = config.getBoolean("FakePlayerCanPickup", false);
+		FAKE_PLAYER_PARTY_QUEST_CREDIT = config.getBoolean("FakePlayerPartyQuestCredit", true);
+		FAKE_PLAYER_PARTY_QUEST_CREDIT_RANGE = config.getInt("FakePlayerPartyQuestCreditRange", 1500);
 	}
 }

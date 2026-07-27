@@ -48,6 +48,9 @@ import org.l2jmobius.gameserver.data.xml.ItemData;
 import org.l2jmobius.gameserver.managers.CursedWeaponsManager;
 import org.l2jmobius.gameserver.managers.EventDropManager;
 import org.l2jmobius.gameserver.managers.PcCafePointsManager;
+import org.l2jmobius.gameserver.managers.PhantomBuddyManager;
+import org.l2jmobius.gameserver.managers.PhantomManager;
+import org.l2jmobius.gameserver.managers.PhantomPartyManager;
 import org.l2jmobius.gameserver.managers.WalkingManager;
 import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.enums.creature.InstanceType;
@@ -80,6 +83,7 @@ import org.l2jmobius.gameserver.network.enums.ChatType;
 import org.l2jmobius.gameserver.network.serverpackets.CreatureSay;
 import org.l2jmobius.gameserver.network.serverpackets.SystemMessage;
 import org.l2jmobius.gameserver.taskmanagers.DecayTaskManager;
+import org.l2jmobius.gameserver.util.LocationUtil;
 
 public class Attackable extends Npc
 {
@@ -322,7 +326,11 @@ public class Attackable extends Npc
 			final Player player = killer.asPlayer();
 			if ((player != null) && EventDispatcher.getInstance().hasListener(EventType.ON_ATTACKABLE_KILL, this))
 			{
-				EventDispatcher.getInstance().notifyEventAsyncDelayed(new OnAttackableKill(player, this, killer.isSummon()), this, _onKillDelay);
+				// Living World: when a partied phantom lands the killing blow, credit its human owner for
+				// quest purposes so the player isn't forced to steal the last hit on every mob.
+				final Player credited = resolveQuestKillCredit(player);
+				final boolean isPet = (credited == player) && killer.isSummon();
+				EventDispatcher.getInstance().notifyEventAsyncDelayed(new OnAttackableKill(credited, this, isPet), this, _onKillDelay);
 			}
 		}
 		
@@ -1684,7 +1692,49 @@ public class Attackable extends Npc
 	{
 		return _onKillDelay;
 	}
-	
+
+	/**
+	 * Living World quest-credit re-attribution. Stock L2 credits a mob kill to whoever lands the killing blow;
+	 * with recruited AI parties / personal support buddies doing the fighting, that means the player is denied
+	 * quest progress on every mob a phantom finishes. This maps a phantom killer back to the human that owns it
+	 * so the quest {@code onKill} fires for the player instead - and, because the player becomes the credited
+	 * killer, any per-killer quest condition (faction allegiance, level, has-quest-item, ...) is checked against
+	 * the player rather than the allegiance-less phantom.
+	 * <p>
+	 * Only the phantom's own owner is credited (each recruit/buddy records the human that recruited it), so a
+	 * party with two humans stays correct: each still earns from their own last hits and their own recruits.
+	 * A distance guard keeps a player from farming quests while idle far from the fight.
+	 * @param killer the player that landed the killing blow (never {@code null})
+	 * @return the human to credit for quest purposes - the phantom's owner when applicable, otherwise {@code killer} unchanged
+	 */
+	private Player resolveQuestKillCredit(Player killer)
+	{
+		if (!FakePlayersConfig.FAKE_PLAYER_PARTY_QUEST_CREDIT || !PhantomManager.getInstance().isPhantom(killer))
+		{
+			return killer;
+		}
+
+		// Resolve the human owner: a recruited combat-party member, or a personal support buddy.
+		Player owner = PhantomPartyManager.getInstance().getRecruitOwner(killer);
+		if (owner == null)
+		{
+			owner = PhantomBuddyManager.getInstance().getBuddyOwner(killer);
+		}
+		if ((owner == null) || !owner.isOnline())
+		{
+			return killer;
+		}
+
+		// Proximity guard: the owner must actually be near the kill (0 disables the check).
+		final int range = FakePlayersConfig.FAKE_PLAYER_PARTY_QUEST_CREDIT_RANGE;
+		if ((range > 0) && !LocationUtil.checkIfInRange(range, this, owner, false))
+		{
+			return killer;
+		}
+
+		return owner;
+	}
+
 	/**
 	 * Check if the server allows Random Animation.
 	 */

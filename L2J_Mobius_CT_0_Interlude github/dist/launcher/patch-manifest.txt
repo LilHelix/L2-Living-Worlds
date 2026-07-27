@@ -19,3 +19,4 @@
 # ---- current release -------------------------------------------------------
 game/data/html/admin/rates.htm
 game/data/scripts/handlers/chat/commands/admin/AdminRates.java
+brain/fpc_brain.py

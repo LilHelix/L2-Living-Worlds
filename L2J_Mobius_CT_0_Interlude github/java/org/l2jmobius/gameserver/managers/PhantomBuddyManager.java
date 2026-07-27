@@ -236,6 +236,17 @@ public class PhantomBuddyManager implements IXmlReader
 	}
 
 	/**
+	 * @param buddy a personal support phantom
+	 * @return the human this buddy is bound to (party owner), or {@code null} if it isn't a buddy or is still
+	 *         idle in town. Used to re-attribute a buddy's quest kill credit to its owner.
+	 */
+	public Player getBuddyOwner(Player buddy)
+	{
+		final Buddy state = (buddy != null) ? _buddies.get(buddy.getObjectId()) : null;
+		return (state != null) ? state.owner : null;
+	}
+
+	/**
 	 * Handles a whisper a player sent to a buddy and returns the buddy's reply (delivered as a whisper back).
 	 * Deterministic keyword parsing - works with the LLM brain offline.
 	 */
