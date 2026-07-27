@@ -289,4 +289,34 @@ public final class PhantomBuffs
 			}
 		}
 	}
+
+	// ===== Cross-caster buff reservations =====
+	// Several independent bot buff sources can target the same player: the recruited-party supports
+	// (PhantomPartyManager) and the personal support buddy (PhantomBuddyManager). A cast is not instant, so if two
+	// of them both decide to cast the SAME buff inside the cast-time window, each sees "target not buffed yet" and
+	// both cast, landing the buff twice (a double icon, and for some buffs a doubled stat). The shared, race-safe
+	// PhantomBuffReservations registry makes the sources coordinate: a caster claims (target, skill) just before
+	// casting; anyone else who finds it claimed by a different caster skips that buff. Claims auto-expire.
+	private static final PhantomBuffReservations BUFF_RESERVATIONS = new PhantomBuffReservations();
+
+	/**
+	 * Attempts to claim a buff cast so no other bot double-casts the same buff on the same target. Call this
+	 * immediately before {@code doCast}, once every other gate (range / MP / stand-up) has passed.
+	 * @param targetObjectId the buff target's object id
+	 * @param skillId the buff skill id
+	 * @param casterObjectId the casting phantom's object id (a caster never blocks its own re-claim)
+	 * @param holdMillis how long the claim is held (use {@link #buffHoldMillis(Skill)})
+	 * @return {@code true} if this caster may cast now (claim taken/refreshed); {@code false} if a different bot is
+	 *         already landing this exact buff on this target and the caller should skip it
+	 */
+	public static boolean reserveBuff(int targetObjectId, int skillId, int casterObjectId, int holdMillis)
+	{
+		return BUFF_RESERVATIONS.reserve(PhantomBuffReservations.key(targetObjectId, skillId), System.currentTimeMillis(), casterObjectId, holdMillis);
+	}
+
+	/** How long to hold a buff reservation: the skill's cast time plus a margin for the effect to actually land. */
+	public static int buffHoldMillis(Skill buff)
+	{
+		return Math.max(2500, buff.getHitTime() + 1200);
+	}
 }
