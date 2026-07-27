@@ -1,0 +1,21 @@
+# Incremental patch manifest
+# ---------------------------------------------------------------------------
+# One path per line, RELATIVE TO THE PACK ROOT (i.e. the folder that has
+# game\, login\, libs\, launcher\, ...). These are the files that changed in
+# THIS release and should ship in L2J-Offline-Patch.zip so an existing tester
+# can unzip it over their install to update without touching their database.
+#
+# Rules:
+#   - libs\GameServer.jar is ALWAYS included automatically - do NOT list it.
+#   - Blank lines and lines starting with # are ignored.
+#   - Forward or back slashes are both fine.
+#   - Do NOT list files a tester may have customized (e.g. game\config\*.ini,
+#     especially Rates.ini) - overwriting those would reset their settings.
+#     Mention any new config keys in the release notes instead.
+#   - Edit this list for each release: remove last release's entries, add the
+#     datapack/config/html files that changed this time. The build FAILS if a
+#     listed file is missing from the pack, so a typo can't ship a broken patch.
+#
+# ---- current release -------------------------------------------------------
+game/data/html/admin/rates.htm
+game/data/scripts/handlers/chat/commands/admin/AdminRates.java

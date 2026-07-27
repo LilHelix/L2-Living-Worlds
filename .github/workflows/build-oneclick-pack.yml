@@ -60,3 +60,14 @@ jobs:
           path: "L2J_Mobius_CT_0_Interlude github/L2J-Offline-OneClick.zip"
           if-no-files-found: error
           retention-days: 30
+
+      # The incremental patch zip (built from dist/launcher/patch-manifest.txt) for
+      # existing testers to update without losing their database. Warn (don't fail)
+      # if it is absent, so the full-pack build still succeeds when no manifest exists.
+      - name: Upload the patch zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: L2J-Offline-Patch
+          path: "L2J_Mobius_CT_0_Interlude github/L2J-Offline-Patch.zip"
+          if-no-files-found: warn
+          retention-days: 30
