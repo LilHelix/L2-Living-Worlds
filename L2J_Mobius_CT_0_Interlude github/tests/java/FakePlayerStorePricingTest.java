@@ -46,6 +46,7 @@ public class FakePlayerStorePricingTest
 
 	public static void main(String[] args)
 	{
+		testEffectiveReference();
 		testClampDealPrice();
 		testNormalizedDealCount();
 		testBulkAmountRange();
@@ -61,6 +62,23 @@ public class FakePlayerStorePricingTest
 			System.exit(1);
 		}
 		System.out.println("OK");
+	}
+
+	private static void testEffectiveReference()
+	{
+		// Multiplier of 1 (or the price already <= 0) is an identity: today's retail-like behaviour is unchanged.
+		eq(1000, FakePlayerStorePricing.effectiveReference(1000, 1.0), "1x multiplier leaves the price unchanged");
+		eq(1, FakePlayerStorePricing.effectiveReference(0, 4.0), "zero reference price -> at least 1");
+		// A raised multiplier scales the whole reference up (this is the //rates 'storeprice' knob).
+		eq(4000, FakePlayerStorePricing.effectiveReference(1000, 4.0), "4x multiplier scales the reference");
+		eq(2500, FakePlayerStorePricing.effectiveReference(1000, 2.5), "fractional multiplier scales the reference");
+		eq(333, FakePlayerStorePricing.effectiveReference(1000, 0.333), "sub-1 multiplier discounts (rounded)");
+		eq(3, FakePlayerStorePricing.effectiveReference(10, 0.25), "rounding: 10 * 0.25 -> 3 (round half up)");
+		// A non-positive multiplier is treated as 1 so a mis-set config can never zero out or invert prices.
+		eq(1000, FakePlayerStorePricing.effectiveReference(1000, 0.0), "zero multiplier treated as 1x");
+		eq(1000, FakePlayerStorePricing.effectiveReference(1000, -3.0), "negative multiplier treated as 1x");
+		// A huge multiplier can never overflow the int the store line stores.
+		eq(Integer.MAX_VALUE, FakePlayerStorePricing.effectiveReference(200_000_000, 1000.0), "overflow clamped to Integer.MAX_VALUE");
 	}
 
 	private static void testClampDealPrice()

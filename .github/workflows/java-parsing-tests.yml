@@ -10,6 +10,7 @@ on:
       - "L2J_Mobius_CT_0_Interlude github/java/org/l2jmobius/gameserver/managers/FakePlayerChatParsing.java"
       - "L2J_Mobius_CT_0_Interlude github/java/org/l2jmobius/gameserver/managers/FakePlayerStorePricing.java"
       - "L2J_Mobius_CT_0_Interlude github/java/org/l2jmobius/gameserver/managers/FakePlayerNameFactory.java"
+      - "L2J_Mobius_CT_0_Interlude github/java/org/l2jmobius/gameserver/managers/PhantomBuffReservations.java"
       - "L2J_Mobius_CT_0_Interlude github/tests/java/**"
       - ".github/workflows/java-parsing-tests.yml"
   push:
@@ -19,6 +20,7 @@ on:
       - "L2J_Mobius_CT_0_Interlude github/java/org/l2jmobius/gameserver/managers/FakePlayerChatParsing.java"
       - "L2J_Mobius_CT_0_Interlude github/java/org/l2jmobius/gameserver/managers/FakePlayerStorePricing.java"
       - "L2J_Mobius_CT_0_Interlude github/java/org/l2jmobius/gameserver/managers/FakePlayerNameFactory.java"
+      - "L2J_Mobius_CT_0_Interlude github/java/org/l2jmobius/gameserver/managers/PhantomBuffReservations.java"
       - "L2J_Mobius_CT_0_Interlude github/tests/java/**"
       - ".github/workflows/java-parsing-tests.yml"
 
@@ -46,7 +48,9 @@ jobs:
             "java/org/l2jmobius/gameserver/managers/FakePlayerChatParsing.java" \
             "java/org/l2jmobius/gameserver/managers/FakePlayerStorePricing.java" \
             "java/org/l2jmobius/gameserver/managers/FakePlayerNameFactory.java" \
+            "java/org/l2jmobius/gameserver/managers/PhantomBuffReservations.java" \
             tests/java/*.java
           java -cp build/test-classes FakePlayerChatParsingTest
           java -cp build/test-classes FakePlayerStorePricingTest
           java -cp build/test-classes FakePlayerNameFactoryTest
+          java -cp build/test-classes PhantomBuffReservationsTest

@@ -28,6 +28,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.l2jmobius.commons.util.Rnd;
+import org.l2jmobius.gameserver.config.RatesConfig;
 import org.l2jmobius.gameserver.data.xml.ItemData;
 import org.l2jmobius.gameserver.data.xml.RecipeData;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerCraftItem;
@@ -44,7 +45,9 @@ import org.l2jmobius.gameserver.model.item.type.ItemType;
  * Everything is driven by the datapack item table, so prices and grades are the game's own:
  * <ul>
  * <li><b>Realistic pricing</b> - each line is {@link ItemTemplate#getReferencePrice()} times a small
- * markup (sellers ask above, buyers offer below). No hand-tuned price list to maintain.</li>
+ * markup (sellers ask above, buyers offer below). No hand-tuned price list to maintain. The whole scale is
+ * shifted by the live {@code FakePlayerStorePriceMultiplier} rate ({@link #effRef(int)}), so a server on an
+ * inflated adena rate can raise store prices to match with one knob without changing the relative prices.</li>
  * <li><b>Grade scarcity</b> - equipment is picked by a weighted grade roll (no-grade/D common, S
  * extremely rare) and additionally capped by the vendor's level, so a low-level town never floods with
  * S-grade and high grades stay scarce everywhere.</li>
@@ -384,7 +387,7 @@ public class FakePlayerStoreFactory
 		}
 
 		final int count = Rnd.get(SHOT_STACK_MIN, SHOT_STACK_MAX);
-		final int price = priced(item.getReferencePrice(), 1.0, 1.25);
+		final int price = priced(effRef(item.getReferencePrice()), 1.0, 1.25);
 		stock.add(line(item, 0, count, price));
 	}
 
@@ -479,7 +482,7 @@ public class FakePlayerStoreFactory
 		{
 			final int fallbackCount = item.isStackable() ? bulkAmount(item.getReferencePrice()) : 1;
 			final int count = normalizedDealCount(item, requestedCount, fallbackCount);
-			final int price = unitPrice > 0 ? clampDealPrice(unitPrice, item.getReferencePrice(), true) : priced(item.getReferencePrice(), 1.0, 1.6);
+			final int price = unitPrice > 0 ? clampDealPrice(unitPrice, effRef(item.getReferencePrice()), true) : priced(effRef(item.getReferencePrice()), 1.0, 1.6);
 			stock.add(line(item, 0, count, price));
 		}
 		return stock;
@@ -520,7 +523,7 @@ public class FakePlayerStoreFactory
 		{
 			final int fallbackCount = item.isStackable() ? bulkAmount(item.getReferencePrice()) : Rnd.get(1, 3);
 			final int count = normalizedDealCount(item, requestedCount, fallbackCount);
-			final int price = unitPrice > 0 ? clampDealPrice(unitPrice, item.getReferencePrice(), false) : priced(item.getReferencePrice(), 0.5, 0.85);
+			final int price = unitPrice > 0 ? clampDealPrice(unitPrice, effRef(item.getReferencePrice()), false) : priced(effRef(item.getReferencePrice()), 0.5, 0.85);
 			stock.add(line(item, 0, count, price));
 		}
 		return stock;
@@ -547,6 +550,17 @@ public class FakePlayerStoreFactory
 	private static int clampDealPrice(int unitPrice, int referencePrice, boolean selling)
 	{
 		return FakePlayerStorePricing.clampDealPrice(unitPrice, referencePrice, selling);
+	}
+
+	/**
+	 * The item reference price scaled by the live store-price multiplier ({@link RatesConfig#RATE_FAKE_PLAYER_STORE_PRICE}).
+	 * All store pricing derives from this so generated stores, negotiated deals and the anti-injection clamp band scale
+	 * together; stack sizes are unaffected (they use the raw reference). Read live so {@code //setrate storeprice} takes
+	 * effect on the next generated/restocked store without a restart.
+	 */
+	private static int effRef(int referencePrice)
+	{
+		return FakePlayerStorePricing.effectiveReference(referencePrice, RatesConfig.RATE_FAKE_PLAYER_STORE_PRICE);
 	}
 
 	/** referencePrice * random factor in [lo, hi], clamped to a valid positive int. */
@@ -595,7 +609,7 @@ public class FakePlayerStoreFactory
 			}
 			final int count = bulk ? bulkAmount(item.getReferencePrice()) : 1;
 			final int enchant = (!bulk && (item.getCrystalType().ordinal() >= 1) && (Rnd.get(100) < 15)) ? Rnd.get(1, 4) : 0;
-			final int price = priced(item.getReferencePrice(), bulk ? 1.0 : 1.0, bulk ? 1.4 : 1.7);
+			final int price = priced(effRef(item.getReferencePrice()), bulk ? 1.0 : 1.0, bulk ? 1.4 : 1.7);
 			stock.add(line(item, enchant, count, price));
 		}
 		return stock;
@@ -623,7 +637,7 @@ public class FakePlayerStoreFactory
 				continue;
 			}
 			final int count = bulk ? bulkAmount(item.getReferencePrice()) : Rnd.get(1, 3);
-			final int price = priced(item.getReferencePrice(), 0.45, 0.8);
+			final int price = priced(effRef(item.getReferencePrice()), 0.45, 0.8);
 			stock.add(line(item, 0, count, price));
 		}
 		return stock;
@@ -642,7 +656,7 @@ public class FakePlayerStoreFactory
 		if (item != null)
 		{
 			final int count = Rnd.get(ANCIENT_ADENA_SELL_STOCK_MIN, ANCIENT_ADENA_SELL_STOCK_MAX);
-			stock.add(line(item, 0, count, ANCIENT_ADENA_SELL_UNIT));
+			stock.add(line(item, 0, count, effRef(ANCIENT_ADENA_SELL_UNIT)));
 		}
 		return stock;
 	}
@@ -659,7 +673,7 @@ public class FakePlayerStoreFactory
 		if (item != null)
 		{
 			final int count = Rnd.get(ANCIENT_ADENA_BUY_STOCK_MIN, ANCIENT_ADENA_BUY_STOCK_MAX);
-			stock.add(line(item, 0, count, ANCIENT_ADENA_BUY_UNIT));
+			stock.add(line(item, 0, count, effRef(ANCIENT_ADENA_BUY_UNIT)));
 		}
 		return stock;
 	}
@@ -722,7 +736,7 @@ public class FakePlayerStoreFactory
 				continue;
 			}
 			final ItemTemplate product = ItemData.getInstance().getTemplate(recipe.getItemId());
-			final int productValue = product == null ? 1000 : product.getReferencePrice();
+			final int productValue = effRef(product == null ? 1000 : product.getReferencePrice());
 			final int fee = (int) Math.max(100L, Math.min((long) (productValue * (0.08 + (Rnd.nextDouble() * 0.17))), Integer.MAX_VALUE));
 			recipes.add(new FakePlayerCraftItem(recipe.getId(), fee));
 		}

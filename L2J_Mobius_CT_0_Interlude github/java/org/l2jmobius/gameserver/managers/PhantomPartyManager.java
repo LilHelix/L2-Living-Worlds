@@ -3232,6 +3232,10 @@ public class PhantomPartyManager
 				}
 				state.pendingBuff = null;
 				state.pendingBuffTarget = null;
+				if (!PhantomBuffs.reserveBuff(target.getObjectId(), buff.getId(), npc.getObjectId(), PhantomBuffs.buffHoldMillis(buff)))
+				{
+					return; // another support (or the buddy) is already landing this exact buff on the target
+				}
 				npc.setTarget(target);
 				npc.doCast(buff);
 				return;
@@ -4017,6 +4021,11 @@ public class PhantomPartyManager
 					{
 						return true; // getting up first; cast this same buff next tick (index NOT advanced, so it isn't skipped)
 					}
+					if (!PhantomBuffs.reserveBuff(target.getObjectId(), buff.getId(), npc.getObjectId(), PhantomBuffs.buffHoldMillis(buff)))
+					{
+						state.rebuffIdx++; // another support (or the buddy) is already (re)casting this exact buff - skip so it isn't doubled
+						continue;
+					}
 					state.rebuffIdx++;
 					npc.setTarget(target);
 					npc.doCast(buff);
@@ -4057,6 +4066,10 @@ public class PhantomPartyManager
 				if (!readyToCast(npc))
 				{
 					return true; // getting up first; cast on the next tick
+				}
+				if (!PhantomBuffs.reserveBuff(target.getObjectId(), buff.getId(), npc.getObjectId(), PhantomBuffs.buffHoldMillis(buff)))
+				{
+					continue; // another bot buffer (party support or the personal buddy) is already landing this exact buff
 				}
 				npc.setTarget(target);
 				npc.doCast(buff);

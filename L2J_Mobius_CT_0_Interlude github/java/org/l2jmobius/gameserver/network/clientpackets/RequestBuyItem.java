@@ -48,6 +48,10 @@ public class RequestBuyItem extends ClientPacket
 {
 	private static final int BATCH_LENGTH = 8;
 	private static final int CUSTOM_CB_SELL_LIST = 423;
+	// Retail anti-abuse cap on how many of a single item may be bought in one buylist transaction.
+	// Enforced for regular players only; GMs are exempt so the //admin GM shop can hand out large
+	// stacks of currency/consumables (e.g. buying a million adena) without hitting this limit.
+	private static final int MAX_ITEM_COUNT_PER_TRANSACTION = 10000;
 	
 	private int _listId;
 	private List<ItemHolder> _items = null;
@@ -72,13 +76,9 @@ public class RequestBuyItem extends ClientPacket
 				_items = null;
 				return;
 			}
-			
-			if (count > 10000) // Count check.
-			{
-				_items = null;
-				return;
-			}
-			
+
+			// The per-item count cap is enforced in runImpl(), where the buyer's GM status is known, so a GM
+			// can purchase large stacks (e.g. currency from the //admin GM shop) that a regular player cannot.
 			_items.add(new ItemHolder(itemId, count));
 		}
 	}
@@ -100,7 +100,6 @@ public class RequestBuyItem extends ClientPacket
 		
 		if (_items == null)
 		{
-			player.sendMessage("You cannot buy more than 10.000 items.");
 			player.sendPacket(ActionFailed.STATIC_PACKET);
 			return;
 		}
@@ -167,7 +166,16 @@ public class RequestBuyItem extends ClientPacket
 		for (ItemHolder i : _items)
 		{
 			int price = -1;
-			
+
+			// Retail per-item transaction cap - regular players only. GMs are exempt so the //admin GM shop
+			// can dispense large stacks (currency, consumables); GMs already bypass the weight/slot checks below.
+			if (!player.isGM() && (i.getCount() > MAX_ITEM_COUNT_PER_TRANSACTION))
+			{
+				player.sendMessage("You cannot buy more than " + MAX_ITEM_COUNT_PER_TRANSACTION + " items at a time.");
+				player.sendPacket(ActionFailed.STATIC_PACKET);
+				return;
+			}
+
 			final Product product = buyList.getProductByItemId(i.getId());
 			if (product == null)
 			{

@@ -44,6 +44,26 @@ public final class FakePlayerStorePricing
 	}
 
 	/**
+	 * Scales an item's reference price by the configurable store-price multiplier to yield the
+	 * <i>effective</i> reference used for all fake-player store pricing. Feeding this into the markup and
+	 * clamp logic keeps generated stores, negotiated deals and the anti-injection band all coherent, so a
+	 * server on an inflated adena rate can raise store prices to match with a single knob. A multiplier of
+	 * {@code <= 0} (or exactly 1) leaves the price unchanged; the result is clamped to {@code [1, Integer.MAX_VALUE]}.
+	 * @param referencePrice the item reference price
+	 * @param multiplier the store-price multiplier (retail-like = 1)
+	 * @return the scaled reference price, at least 1 and never overflowing an int
+	 */
+	public static int effectiveReference(int referencePrice, double multiplier)
+	{
+		if ((multiplier <= 0) || (multiplier == 1) || (referencePrice <= 0))
+		{
+			return Math.max(1, referencePrice);
+		}
+		final long scaled = Math.round(referencePrice * multiplier);
+		return (int) Math.max(1L, Math.min(scaled, Integer.MAX_VALUE));
+	}
+
+	/**
 	 * Clamp a whisper-negotiated unit price into a sane band around the item reference price. The agreed
 	 * price is trust-based on the LLM, so without this a player (or a trade-chat prompt injection) could talk
 	 * a bot into selling a rare item for 1 adena or buying junk for billions. Haggling still works within the

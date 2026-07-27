@@ -48,6 +48,9 @@ public class RatesConfig
 	public static float RATE_PARTY_XP;
 	public static float RATE_PARTY_SP;
 	public static float RATE_EXTRACTABLE;
+	// Custom: multiplier applied to fake-player private-store / crafter prices (see FakePlayerStoreFactory).
+	// 1 = retail-like reference prices; raise it to track an inflated adena rate (e.g. 4 on a 4x adena server).
+	public static float RATE_FAKE_PLAYER_STORE_PRICE;
 	public static int RATE_DROP_MANOR;
 	public static float QUEST_ITEM_DROP_AMOUNT_MULTIPLIER;
 	public static float RATE_QUEST_REWARD;
@@ -116,6 +119,7 @@ public class RatesConfig
 		RATE_PARTY_XP = config.getFloat("RatePartyXp", 1);
 		RATE_PARTY_SP = config.getFloat("RatePartySp", 1);
 		RATE_EXTRACTABLE = config.getFloat("RateExtractable", 1);
+		RATE_FAKE_PLAYER_STORE_PRICE = config.getFloat("FakePlayerStorePriceMultiplier", 1);
 		RATE_DROP_MANOR = config.getInt("RateDropManor", 1);
 		QUEST_ITEM_DROP_AMOUNT_MULTIPLIER = config.getFloat("QuestItemDropAmountMultiplier", 1);
 		RATE_QUEST_REWARD = config.getFloat("RateQuestReward", 1);

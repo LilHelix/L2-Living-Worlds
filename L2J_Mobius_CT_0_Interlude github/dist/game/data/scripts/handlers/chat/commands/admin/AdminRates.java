@@ -107,8 +107,11 @@ public class AdminRates implements IAdminCommandHandler
 				case "questadena":
 					RatesConfig.RATE_QUEST_REWARD_ADENA = Float.parseFloat(val);
 					break;
+				case "storeprice":
+					RatesConfig.RATE_FAKE_PLAYER_STORE_PRICE = Float.parseFloat(val);
+					break;
 				default:
-					activeChar.sendSysMessage("Unknown key: " + key + ". Valid keys: xp sp partyxp partysp adena drop dropamount dropchance spoil raidrop questxp questsp questadena");
+					activeChar.sendSysMessage("Unknown key: " + key + ". Valid keys: xp sp partyxp partysp adena drop dropamount dropchance spoil raidrop questxp questsp questadena storeprice");
 					return false;
 			}
 		}
@@ -144,6 +147,7 @@ public class AdminRates implements IAdminCommandHandler
 				else if (trimmed.startsWith("RateQuestRewardXP"))        line = "RateQuestRewardXP = " + RatesConfig.RATE_QUEST_REWARD_XP;
 				else if (trimmed.startsWith("RateQuestRewardSP"))        line = "RateQuestRewardSP = " + RatesConfig.RATE_QUEST_REWARD_SP;
 				else if (trimmed.startsWith("RateQuestRewardAdena"))     line = "RateQuestRewardAdena = " + RatesConfig.RATE_QUEST_REWARD_ADENA;
+				else if (trimmed.startsWith("FakePlayerStorePriceMultiplier")) line = "FakePlayerStorePriceMultiplier = " + RatesConfig.RATE_FAKE_PLAYER_STORE_PRICE;
 				else if (trimmed.startsWith("DropAmountMultiplierByItemId"))
 				{
 					// Rebuild the adena entry inline, preserve others
@@ -186,6 +190,7 @@ public class AdminRates implements IAdminCommandHandler
 		html.replace("%raidrop%",     fmt(RatesConfig.RATE_RAID_DROP_AMOUNT_MULTIPLIER));
 		html.replace("%questxp%",     fmt(RatesConfig.RATE_QUEST_REWARD_XP));
 		html.replace("%questadena%",  fmt(RatesConfig.RATE_QUEST_REWARD_ADENA));
+		html.replace("%storeprice%",  fmt(RatesConfig.RATE_FAKE_PLAYER_STORE_PRICE));
 		activeChar.sendPacket(html);
 	}
 

@@ -35,11 +35,13 @@ PROD_SOURCES=(
 	"java/org/l2jmobius/gameserver/managers/FakePlayerChatParsing.java"
 	"java/org/l2jmobius/gameserver/managers/FakePlayerStorePricing.java"
 	"java/org/l2jmobius/gameserver/managers/FakePlayerNameFactory.java"
+	"java/org/l2jmobius/gameserver/managers/PhantomBuffReservations.java"
 )
 JAVA_MAIN_CLASSES=(
 	"FakePlayerChatParsingTest"
 	"FakePlayerStorePricingTest"
 	"FakePlayerNameFactoryTest"
+	"PhantomBuffReservationsTest"
 )
 
 failures=0
