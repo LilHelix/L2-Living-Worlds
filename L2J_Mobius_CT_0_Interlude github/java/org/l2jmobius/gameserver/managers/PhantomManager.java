@@ -61,7 +61,6 @@ import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Creature;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.appearance.PlayerAppearance;
-import org.l2jmobius.gameserver.model.actor.enums.creature.Race;
 import org.l2jmobius.gameserver.model.actor.enums.player.PlayerClass;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoPlaySettingsHolder;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoUseSettingsHolder;
@@ -257,12 +256,13 @@ public class PhantomManager implements IXmlReader
 	// loadouts: fighters (sword + light/heavy armor) and mages (magic weapon + robe).
 	private static final Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> FIGHTER_GEAR = new EnumMap<>(BodyPart.class);
 	private static final Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> MAGE_GEAR = new EnumMap<>(BodyPart.class);
-	// Caster armor item ids that have NO Orc-Mystic model in the client and so render invisibly on an Orc
-	// (Warcryer) - chest/legs vanish. There is no server-side attribute to detect this (identical items render
-	// differently), so it is a tested deny-list: an Orc caster is geared from everything EXCEPT these. Add ids
-	// here as the debug gear log turns up more offenders. Confirmed so far: 445 Paradia Tunic (chest),
-	// 474 Stockings of Mana (legs).
-	private static final Set<Integer> ORC_CASTER_ARMOR_SKIP = Set.of(445, 474);
+	// DISABLED (kept for reference). Caster armor item ids that have NO Orc-Mystic model in the client and so
+	// render invisibly on an Orc (Warcryer) - chest/legs vanish. There is no server-side attribute to detect this
+	// (identical items render differently), so it was a tested deny-list: an Orc caster was geared from everything
+	// EXCEPT these (445 Paradia Tunic chest, 474 Stockings of Mana legs). Turned OFF for now so orc casters draw
+	// ordinary robe and we can re-check whether the invisible-torso bug still reproduces on the live client. If it
+	// does, re-enable this and pass it as the `skip` set in gear()/gearParty() again.
+	// private static final Set<Integer> ORC_CASTER_ARMOR_SKIP = Set.of(445, 474);
 	private static volatile boolean _gearBuilt = false;
 
 	/**
@@ -335,23 +335,29 @@ public class PhantomManager implements IXmlReader
 	 */
 	public enum PartyRole
 	{
-		TANK(false, BuddyRole.NONE),
-		WARRIOR(false, BuddyRole.NONE),
-		ARCHER(false, BuddyRole.NONE),
-		DAGGER(false, BuddyRole.NONE),
-		SINGER(false, BuddyRole.NONE), // Swordsinger: melee that keeps the party's songs running (2-min recast loop)
-		DANCER(false, BuddyRole.NONE), // Bladedancer: dual-wield melee that keeps the dances running
-		NUKER(true, BuddyRole.NONE),
-		HEALER(true, BuddyRole.ELDER), // Elven Elder kit (heals + recharge); granted Resurrection on spawn
-		BUFFER(true, BuddyRole.PROPHET); // Prophet fighter-buff kit
+		// The armor field is the class's practical armor family (from its datapack armor-mastery skill, cross-checked
+		// against community Interlude builds): Heavy for tanks/warriors/singer/dancer, Light for archers/daggers,
+		// MAGIC (=robe) for casters. It drives gearParty's armor pick so an archer no longer rolls heavy plate, etc.
+		TANK(false, BuddyRole.NONE, ArmorType.HEAVY),
+		WARRIOR(false, BuddyRole.NONE, ArmorType.HEAVY),
+		ARCHER(false, BuddyRole.NONE, ArmorType.LIGHT),
+		DAGGER(false, BuddyRole.NONE, ArmorType.LIGHT),
+		MONK(false, BuddyRole.NONE, ArmorType.LIGHT), // Orc Monk / Tyrant / Grand Khavatari: unarmed (fist) light-armor melee bruiser
+		SINGER(false, BuddyRole.NONE, ArmorType.HEAVY), // Swordsinger: melee that keeps the party's songs running (2-min recast loop)
+		DANCER(false, BuddyRole.NONE, ArmorType.HEAVY), // Bladedancer: dual-wield melee that keeps the dances running (Heavy + dual swords is the retail standard)
+		NUKER(true, BuddyRole.NONE, ArmorType.MAGIC),
+		HEALER(true, BuddyRole.ELDER, ArmorType.MAGIC), // Elven Elder kit (heals + recharge); granted Resurrection on spawn
+		BUFFER(true, BuddyRole.PROPHET, ArmorType.MAGIC); // Prophet fighter-buff kit
 
 		final boolean mage;
 		final BuddyRole supportAs;
+		final ArmorType armor;
 
-		PartyRole(boolean mage, BuddyRole supportAs)
+		PartyRole(boolean mage, BuddyRole supportAs, ArmorType armor)
 		{
 			this.mage = mage;
 			this.supportAs = supportAs;
+			this.armor = armor;
 		}
 
 		/** @return {@code true} for HEALER/BUFFER: outfit via the support path, behaviour driven by hand. */
@@ -450,6 +456,14 @@ public class PhantomManager implements IXmlReader
 				{
 					return DANCER;
 				}
+				case "monk":
+				case "tyrant":
+				case "fist":
+				case "gk":
+				case "khavatari":
+				{
+					return MONK;
+				}
 				default:
 				{
 					return null;
@@ -465,7 +479,8 @@ public class PhantomManager implements IXmlReader
 				WARRIOR,
 				ARCHER,
 				DAGGER,
-				NUKER
+				NUKER,
+				MONK
 			};
 			return dps[Rnd.get(dps.length)];
 		}
@@ -528,6 +543,14 @@ public class PhantomManager implements IXmlReader
 		if (playerClass.isMage())
 		{
 			return PartyRole.NUKER;
+		}
+		if (nameHas(name, "monk", "tyrant", "khavatari")) // Orc fist-fighters: light armor + fist weapon
+		{
+			return PartyRole.MONK;
+		}
+		if (nameHas(name, "scavenger", "bounty", "artisan", "warsmith", "seeker", "maestro")) // Dwarves: blunt/heavy melee, not daggers (despite "hunter"/"seeker" in the names)
+		{
+			return PartyRole.WARRIOR;
 		}
 		if (nameHas(name, "ranger", "hawkeye", "sentinel", "sagittarius", "scout", "archer"))
 		{
@@ -2023,40 +2046,87 @@ public class PhantomManager implements IXmlReader
 		phantom.getAutoUseSettings().setAutoPotionItem(HP_POTION_ID);
 		phantom.getAutoPlaySettings().setAutoPotionPercent(HP_POTION_PERCENT);
 
-		// Armor pieces: a varied at-or-below-grade piece per slot. Completeness varies (chest almost
-		// always, helmet/gloves often skipped) so a group is not a row of identical fully-armored clones.
-		// Orc casters (Warcryer) skip the armor ids that have no orc model and would render invisibly.
-		final Set<Integer> skip = (mage && (phantom.getRace() == Race.ORC)) ? ORC_CASTER_ARMOR_SKIP : null;
-		for (BodyPart slot : GEAR_SLOTS)
-		{
-			if (slot == BodyPart.R_HAND)
-			{
-				continue;
-			}
-			if ((slot == BodyPart.HEAD) && (Rnd.get(100) >= 55))
-			{
-				continue;
-			}
-			if ((slot == BodyPart.GLOVES) && (Rnd.get(100) >= 60))
-			{
-				continue;
-			}
-			if ((slot == BodyPart.FEET) && (Rnd.get(100) >= 85))
-			{
-				continue;
-			}
-			if ((slot == BodyPart.LEGS) && (Rnd.get(100) >= 92))
-			{
-				continue;
-			}
-			final ItemTemplate piece = pickForSlot(set, slot, desired, skip);
-			if (piece != null)
-			{
-				equip(phantom, piece);
-			}
-		}
+		// Armor: a full matching set (Karmian / Mithril / Full Plate, ...) for the loadout's family, so a field
+		// hunter wears a coherent outfit instead of a random per-slot mix. Fighters roll light or heavy for variety.
+		final ArmorType family = mage ? ArmorType.MAGIC : (Rnd.get(100) < 55 ? ArmorType.LIGHT : ArmorType.HEAVY);
+		equipArmorSet(phantom, family, desired, 0, false);
+
+		// Jewelry: necklace + two earrings + two rings, for the extra P./M.Def that keeps a field hunter alive.
+		equipJewelry(phantom, BodyPart.NECK, desired, 1);
+		equipJewelry(phantom, BodyPart.LR_EAR, desired, 2);
+		equipJewelry(phantom, BodyPart.LR_FINGER, desired, 2);
+
 		// No broadcast here: gear() runs before the phantom enters the world, so the whole set is in place
 		// for the spawn CharInfo (enterWorld broadcasts afterwards).
+	}
+
+	/**
+	 * Equips a coherent matching armor set (from {@link FakePlayerArmorSets}) for {@code family}/{@code grade},
+	 * filling any slot the set does not define from the best in-family (body) or generic (extremity) piece, so no
+	 * slot is left bare. A one-piece full-body chest correctly leaves the legs slot empty. With {@code wantShield}
+	 * the set's shield (or the best shield in grade) is added.
+	 */
+	private void equipArmorSet(Player phantom, ArmorType family, CrystalType grade, int enchant, boolean wantShield)
+	{
+		final FakePlayerArmorSets.Outfit outfit = FakePlayerArmorSets.random(family, grade);
+		if (outfit == null)
+		{
+			// No set for this family/grade - fall back to best per-slot (body family-correct, extremities agnostic).
+			for (BodyPart slot : GEAR_SLOTS)
+			{
+				if (slot == BodyPart.R_HAND)
+				{
+					continue;
+				}
+				final ItemTemplate piece = bestArmor(slot, grade, family, null);
+				if (piece != null)
+				{
+					equip(phantom, piece, enchant);
+				}
+			}
+			if (wantShield)
+			{
+				equipPiece(phantom, bestEquip(grade, item -> (item instanceof Armor) && (((Armor) item).getItemType() == ArmorType.SHIELD)), enchant);
+			}
+			return;
+		}
+		equipById(phantom, outfit.chest, enchant);
+		if (!outfit.onepiece)
+		{
+			equipPiece(phantom, (outfit.legs > 0) ? ItemData.getInstance().getTemplate(outfit.legs) : bestArmor(BodyPart.LEGS, grade, family, null), enchant);
+		}
+		equipPiece(phantom, (outfit.gloves > 0) ? ItemData.getInstance().getTemplate(outfit.gloves) : bestArmor(BodyPart.GLOVES, grade, family, null), enchant);
+		equipPiece(phantom, (outfit.feet > 0) ? ItemData.getInstance().getTemplate(outfit.feet) : bestArmor(BodyPart.FEET, grade, family, null), enchant);
+		equipPiece(phantom, (outfit.head > 0) ? ItemData.getInstance().getTemplate(outfit.head) : bestArmor(BodyPart.HEAD, grade, family, null), enchant);
+		if (wantShield)
+		{
+			if (outfit.shield > 0)
+			{
+				equipById(phantom, outfit.shield, enchant);
+			}
+			else
+			{
+				equipPiece(phantom, bestEquip(grade, item -> (item instanceof Armor) && (((Armor) item).getItemType() == ArmorType.SHIELD)), enchant);
+			}
+		}
+	}
+
+	/** Resolves an item id to its template and equips it (with enchant); no-op if the id is 0 / unknown. */
+	private void equipById(Player phantom, int itemId, int enchant)
+	{
+		if (itemId > 0)
+		{
+			equipPiece(phantom, ItemData.getInstance().getTemplate(itemId), enchant);
+		}
+	}
+
+	/** Equips a resolved template (with enchant); no-op if {@code template} is {@code null}. */
+	private void equipPiece(Player phantom, ItemTemplate template, int enchant)
+	{
+		if (template != null)
+		{
+			equip(phantom, template, enchant);
+		}
 	}
 
 	/**
@@ -2104,33 +2174,11 @@ public class PhantomManager implements IXmlReader
 		phantom.getAutoUseSettings().setAutoPotionItem(HP_POTION_ID);
 		phantom.getAutoPlaySettings().setAutoPotionPercent(HP_POTION_PERCENT);
 
-		// Full armor set: every slot, best in grade, no random gaps. Orc casters still skip the ids that have no
-		// orc model and would render invisibly.
-		final Set<Integer> skip = (mage && (phantom.getRace() == Race.ORC)) ? ORC_CASTER_ARMOR_SKIP : null;
-		final boolean preferHeavy = (role == PartyRole.TANK); // a tank wants the highest mitigation it can wear
-		for (BodyPart slot : GEAR_SLOTS)
-		{
-			if (slot == BodyPart.R_HAND)
-			{
-				continue;
-			}
-			final ItemTemplate piece = bestArmor(slot, grade, mage, skip, preferHeavy);
-			if (piece != null)
-			{
-				equip(phantom, piece, enchant);
-			}
-		}
-
-		// Shield for the tank (a big chunk of a knight's mitigation + block) - and the singer, a knight-line class
-		// that fights sword-and-board while it keeps the songs running.
-		if ((role == PartyRole.TANK) || (role == PartyRole.SINGER))
-		{
-			final ItemTemplate shield = bestEquip(grade, item -> (item instanceof Armor) && (((Armor) item).getItemType() == ArmorType.SHIELD));
-			if (shield != null)
-			{
-				equip(phantom, shield, enchant);
-			}
-		}
+		// Full matching armor set in the class's practical armor family (Heavy for tanks/warriors/singer/dancer,
+		// Light for archer/dagger/monk, robe for casters) - a coherent set (Karmian / Full Plate, ...) rather than a
+		// random per-slot mix, with the tank/singer also getting the set's shield. Any slot the set omits is filled
+		// with the best in-family/generic piece.
+		equipArmorSet(phantom, role.armor, grade, enchant, (role == PartyRole.TANK) || (role == PartyRole.SINGER));
 
 		// Jewelry: necklace + two earrings + two rings (matched by body part; the engine fills both ears/fingers).
 		equipJewelry(phantom, BodyPart.NECK, grade, 1);
@@ -2198,24 +2246,40 @@ public class PhantomManager implements IXmlReader
 				return dual;
 			}
 		}
+		else if (role == PartyRole.MONK)
+		{
+			// Fist fighters (Tyrant / Grand Khavatari) wield fist weapons - the DUALFIST/FIST types.
+			final ItemTemplate fist = bestEquip(grade, item -> (item instanceof Weapon) && ((((Weapon) item).getItemType() == WeaponType.DUALFIST) || (((Weapon) item).getItemType() == WeaponType.FIST)));
+			if (fist != null)
+			{
+				return fist;
+			}
+		}
 		// Sword fallback (and the default melee weapon). A TANK or SINGER needs a ONE-handed sword so its shield fits
 		// the left hand; a two-handed sword would otherwise be unequipped when the shield goes on.
 		final boolean oneHandOnly = (role == PartyRole.TANK) || (role == PartyRole.SINGER);
 		return bestEquip(grade, item -> (item instanceof Weapon) && (((Weapon) item).getItemType() == WeaponType.SWORD) && (!oneHandOnly || (item.getBodyPart() == BodyPart.R_HAND)));
 	}
 
-	/** Best-in-grade armor piece for a slot: a tank prefers HEAVY (falls back to any), casters take MAGIC, others LIGHT/HEAVY. */
-	private static ItemTemplate bestArmor(BodyPart slot, CrystalType grade, boolean mage, Set<Integer> skip, boolean preferHeavy)
+	/**
+	 * Best-in-grade armor piece for a slot in the class's practical armor {@code family} (MAGIC=robe / LIGHT / HEAVY).
+	 * Falls back to any armor family if the desired one has no piece in that slot/grade, so a slot is never left bare
+	 * (e.g. a family that lacks a helmet at some grade still gets one rather than a hole in the set).
+	 */
+	private static ItemTemplate bestArmor(BodyPart slot, CrystalType grade, ArmorType family, Set<Integer> skip)
 	{
-		if (preferHeavy)
+		// Gloves / boots / helmet are family-agnostic (ArmorType.NONE) - any class wears any of them, so pick the
+		// best regardless of family (a family filter would match nothing and leave the slot bare).
+		if ((slot == BodyPart.GLOVES) || (slot == BodyPart.FEET) || (slot == BodyPart.HEAD))
 		{
-			final ItemTemplate heavy = bestArmorOfTypes(slot, grade, skip, EnumSet.of(ArmorType.HEAVY));
-			if (heavy != null)
-			{
-				return heavy;
-			}
+			return bestArmorOfTypes(slot, grade, skip, EnumSet.of(ArmorType.NONE, ArmorType.LIGHT, ArmorType.HEAVY, ArmorType.MAGIC));
 		}
-		return bestArmorOfTypes(slot, grade, skip, mage ? EnumSet.of(ArmorType.MAGIC) : EnumSet.of(ArmorType.LIGHT, ArmorType.HEAVY));
+		final ItemTemplate exact = bestArmorOfTypes(slot, grade, skip, EnumSet.of(family));
+		if (exact != null)
+		{
+			return exact;
+		}
+		return bestArmorOfTypes(slot, grade, skip, EnumSet.of(ArmorType.LIGHT, ArmorType.HEAVY, ArmorType.MAGIC));
 	}
 
 	private static ItemTemplate bestArmorOfTypes(BodyPart slot, CrystalType grade, Set<Integer> skip, Set<ArmorType> allowed)
@@ -2261,9 +2325,9 @@ public class PhantomManager implements IXmlReader
 			ItemTemplate best = null;
 			for (ItemTemplate item : ItemData.getInstance().getAllItems())
 			{
-				if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0) || (item.getCrystalType() != grade))
+				if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0) || (item.getCrystalType() != grade) || !FakePlayerGearFilter.isPlayerGear(item))
 				{
-					continue;
+					continue; // skip pet/summon/monster gear that renders as a sack / invisible slot
 				}
 				if (filter.test(item) && ((best == null) || (item.getReferencePrice() > best.getReferencePrice())))
 				{
@@ -2456,9 +2520,9 @@ public class PhantomManager implements IXmlReader
 			initGearMap(MAGE_GEAR);
 			for (ItemTemplate item : ItemData.getInstance().getAllItems())
 			{
-				if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0))
+				if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0) || !FakePlayerGearFilter.isPlayerGear(item))
 				{
-					continue;
+					continue; // skip pet/summon/monster gear that renders as a sack / invisible slot
 				}
 
 				if (item instanceof Weapon)
@@ -2479,19 +2543,27 @@ public class PhantomManager implements IXmlReader
 				else if (item instanceof Armor)
 				{
 					final BodyPart part = item.getBodyPart();
-					if ((part != BodyPart.CHEST) && (part != BodyPart.LEGS) && (part != BodyPart.GLOVES) && (part != BodyPart.FEET) && (part != BodyPart.HEAD))
+					if ((part == BodyPart.GLOVES) || (part == BodyPart.FEET) || (part == BodyPart.HEAD))
 					{
-						continue; // skip FULL_ARMOR (conflicts with separate legs) and non-armor slots
-					}
-					final ArmorType type = ((Armor) item).getItemType();
-					if ((type == ArmorType.LIGHT) || (type == ArmorType.HEAVY))
-					{
+						// Gloves / boots / helmet are family-agnostic (ArmorType.NONE) - any class wears them, so
+						// they go into both the fighter and the mage loadout. (Without this they'd be dropped by
+						// the family check below and phantoms would show bare hands/feet/head.)
 						FIGHTER_GEAR.get(part).get(item.getCrystalType()).add(item);
-					}
-					else if (type == ArmorType.MAGIC)
-					{
 						MAGE_GEAR.get(part).get(item.getCrystalType()).add(item);
 					}
+					else if ((part == BodyPart.CHEST) || (part == BodyPart.LEGS))
+					{
+						final ArmorType type = ((Armor) item).getItemType();
+						if ((type == ArmorType.LIGHT) || (type == ArmorType.HEAVY))
+						{
+							FIGHTER_GEAR.get(part).get(item.getCrystalType()).add(item);
+						}
+						else if (type == ArmorType.MAGIC)
+						{
+							MAGE_GEAR.get(part).get(item.getCrystalType()).add(item);
+						}
+					}
+					// else FULL_ARMOR (conflicts with separate legs), shields and jewelry - not used by the ambient loadout
 				}
 			}
 			trimGear(FIGHTER_GEAR);
@@ -3114,6 +3186,15 @@ public class PhantomManager implements IXmlReader
 					11,
 					12
 				}[tier]; // Human Mage / Wizard / Sorcerer
+			}
+			case MONK:
+			{
+				return new int[]
+				{
+					44,
+					47,
+					48
+				}[tier]; // Orc Fighter / Orc Monk / Tyrant
 			}
 			default:
 			{
