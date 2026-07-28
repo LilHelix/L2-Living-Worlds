@@ -276,7 +276,8 @@ public class PhantomManager implements IXmlReader
 		NONE(0),
 		ELDER(30), // Elven Elder - mage buffs, heals, recharge
 		PROPHET(17), // Prophet - fighter buffs (Heal granted)
-		WARCRYER(52); // Warcryer - Orc buffs (Heal granted)
+		WARCRYER(52), // Warcryer - Orc buffs (Heal granted)
+		BOUNTY_HUNTER(55); // Bounty Hunter - spoils stuff for you and shares loot afterwards
 
 		final int classId;
 
@@ -313,6 +314,11 @@ public class PhantomManager implements IXmlReader
 				{
 					return WARCRYER;
 				}
+				case "BUDDY_BOUNTY_HUNTER":
+				case "BOUNTY_HUNTER":
+				{
+					return BOUNTY_HUNTER;
+				}
 				default:
 				{
 					return NONE;
@@ -343,7 +349,8 @@ public class PhantomManager implements IXmlReader
 		DANCER(false, BuddyRole.NONE), // Bladedancer: dual-wield melee that keeps the dances running
 		NUKER(true, BuddyRole.NONE),
 		HEALER(true, BuddyRole.ELDER), // Elven Elder kit (heals + recharge); granted Resurrection on spawn
-		BUFFER(true, BuddyRole.PROPHET); // Prophet fighter-buff kit
+		BUFFER(true, BuddyRole.PROPHET), // Prophet fighter-buff kit
+		BOUNTY_HUNTER(false, BuddyRole.BOUNTY_HUNTER); // Bounty Hunter: spoils stuff, shares loot
 
 		final boolean mage;
 		final BuddyRole supportAs;
@@ -450,6 +457,15 @@ public class PhantomManager implements IXmlReader
 				{
 					return DANCER;
 				}
+				case "spoiler":
+				case "spoil":
+				case "scavenger":
+				case "scav":
+				case "bh":
+				case "bounty hunter":
+				{
+					return BOUNTY_HUNTER;
+				}
 				default:
 				{
 					return null;
@@ -533,7 +549,7 @@ public class PhantomManager implements IXmlReader
 		{
 			return PartyRole.ARCHER;
 		}
-		if (nameHas(name, "hunter", "walker", "adventurer", "rider", "assassin", "rogue", "scavenger", "seeker"))
+		if (nameHas(name, "hunter", "walker", "adventurer", "rider", "assassin", "rogue"))
 		{
 			return PartyRole.DAGGER;
 		}
@@ -2196,6 +2212,13 @@ public class PhantomManager implements IXmlReader
 			if (dual != null)
 			{
 				return dual;
+			}
+		}
+		else if (role == PartyRole.BOUNTY_HUNTER)
+		{
+			final ItemTemplate blunt = bestEquip(grade, item -> (item instanceof Weapon) && (((Weapon) item).getItemType() == WeaponType.BLUNT));
+			if (blunt != null) {
+				return blunt;
 			}
 		}
 		// Sword fallback (and the default melee weapon). A TANK or SINGER needs a ONE-handed sword so its shield fits

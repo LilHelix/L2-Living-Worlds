@@ -13,3 +13,5 @@ __pycache__/
 
 # One-click pack build artifacts
 /L2J_Mobius_CT_0_Interlude github/L2J-Offline-OneClick.zip
+
+.idea

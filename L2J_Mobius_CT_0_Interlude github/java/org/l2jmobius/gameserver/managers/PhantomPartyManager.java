@@ -353,6 +353,7 @@ public class PhantomPartyManager
 		List<Skill> songs; // lazy (SINGER/DANCER): the up-to-3 songs/dances this member keeps running
 		boolean songsLookedUp;
 		boolean songsRequested; // explicit "sing"/"dance" order: run the rotation now even out of combat
+		SpoilBehavior spoilBehavior;
 		Skill survival; // lazy (TANK): Ultimate Defense, hand-cast at low HP (parked out of the auto-buff loop)
 		boolean survivalLookedUp;
 		Skill cc; // lazy (NUKER): Sleep / Dryad Root for a loose add
@@ -381,6 +382,10 @@ public class PhantomPartyManager
 		{
 			return role.isSupport();
 		}
+	}
+
+	private enum SpoilBehavior {
+		SPOIL_ON_ASSIST;
 	}
 
 	/**
@@ -775,6 +780,12 @@ public class PhantomPartyManager
 		{
 			state.songsRequested = true;
 			deliver(state, (state.role == PartyRole.SINGER) ? "singing" : "dancing");
+			return true;
+		}
+
+		if (((state.role == PartyRole.BOUNTY_HUNTER) && containsAny(text, "spoil on assist"))) {
+			state.spoilBehavior = SpoilBehavior.SPOIL_ON_ASSIST;
+			deliver(state, "got you boss, spoiling your targets!");
 			return true;
 		}
 
@@ -1976,6 +1987,10 @@ public class PhantomPartyManager
 		{
 			return true;
 		}
+		if ((state.role == PartyRole.BOUNTY_HUNTER) && trySpoilTarget(state, focus))
+		{
+			return true;
+		}
 		// Keep a live auto-attack on the focus: re-assert ATTACK whenever the member isn't mid-swing or mid-cast, so a
 		// clientless melee/archer keeps plinking with soulshots between skills instead of dropping to IDLE.
 		if ((npc.getTarget() != focus) || (!npc.isAttackingNow() && !npc.isCastingNow()))
@@ -3056,6 +3071,17 @@ public class PhantomPartyManager
 		state.rearTries++;
 		npc.setRunning();
 		npc.getAI().setIntention(Intention.MOVE_TO, GeoEngine.getInstance().getValidLocation(npc, rear));
+		return true;
+	}
+
+	private boolean trySpoilTarget(Member state, Monster target)
+	{
+		Player player = state.npc;
+		Skill spoilSkill = player.getKnownSkill(254);
+		if (!target.isSpoiled() && !target.isCastingNow()) {
+			player.doCast(spoilSkill, target, new ArrayList<>());
+			return true;
+		}
 		return true;
 	}
 
