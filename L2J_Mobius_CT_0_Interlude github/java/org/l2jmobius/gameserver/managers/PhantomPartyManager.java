@@ -3151,7 +3151,7 @@ public class PhantomPartyManager
 		{
 			return true; // the real human leader - always protect the player
 		}
-		return (m.role != PartyRole.WARRIOR) && (m.role != PartyRole.DAGGER) && (m.role != PartyRole.TANK);
+		return (m.role != PartyRole.WARRIOR) && (m.role != PartyRole.DAGGER) && (m.role != PartyRole.MONK) && (m.role != PartyRole.TANK);
 	}
 
 	/** {@code true} if {@code who} is a member of this tank's party (so a mob on it is a threat to protect against). */
