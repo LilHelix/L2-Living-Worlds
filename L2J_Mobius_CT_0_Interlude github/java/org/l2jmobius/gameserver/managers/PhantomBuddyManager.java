@@ -1222,13 +1222,27 @@ public class PhantomBuddyManager implements IXmlReader
 			{
 				continue;
 			}
-			final BuffInfo info = target.getEffectList().getBuffInfoBySkillId(buff.getId());
-			if ((info == null) || (info.getTime() <= BUFF_REFRESH_SECONDS))
+			// Presence keys on the abnormal SLOT + LEVEL, not the skill id - see PhantomBuffs.needsBuff. This stops a
+			// buddy looping on a buff it cannot land: a shared slot already held by another buffer's skill, or a
+			// STRONGER effect (a P.Atk herb over a low-level Might) the engine would reject our cast over. A weaker
+			// occupant is upgraded; an equal one is refreshed near expiry. Chant of Life is exempt - it is the
+			// HP-gated HoT keyed on its own id (the HP gate just above already decided it is wanted).
+			final boolean need = (buff.getId() == CHANT_OF_LIFE_ID) //
+				? isExpiringById(target, buff.getId()) //
+				: PhantomBuffs.needsBuff(target, buff, BUFF_REFRESH_SECONDS);
+			if (need)
 			{
 				return buff;
 			}
 		}
 		return null;
+	}
+
+	/** Chant of Life is keyed on its own id (an HP-gated HoT): {@code true} if it is missing or about to expire. */
+	private static boolean isExpiringById(Player target, int skillId)
+	{
+		final BuffInfo info = target.getEffectList().getBuffInfoBySkillId(skillId);
+		return (info == null) || (info.getTime() <= BUFF_REFRESH_SECONDS);
 	}
 
 	/**

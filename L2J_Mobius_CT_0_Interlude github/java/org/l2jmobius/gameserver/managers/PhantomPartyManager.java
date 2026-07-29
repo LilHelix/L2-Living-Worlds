@@ -169,29 +169,62 @@ public class PhantomPartyManager
 
 	// Class competence (party plan Bucket 2): songs/dances, archer discipline, tank panic button, dagger
 	// positioning, DPS aggro-easing, nuker crowd control.
-	// SWS/BD keep their 2-minute songs/dances running (the whole point of bringing one - and legitimate to
-	// maintain mid-raid, unlike 20-minute buffs). A member re-sings when its own copy of the effect has this
-	// little time left; the rotation is capped because each cast is ~60 MP and 2.5s of not fighting.
+	// SWS/BD keep their FULL learned song/dance kit running (the whole point of bringing one - and legitimate to
+	// maintain mid-raid, unlike 20-minute buffs). A member re-sings when its own copy of the effect has this little
+	// time left. The rotation is no longer pinned to a fixed 3: songs and dances share the target's 12-slot music
+	// pool (MaxDanceAmount), so resolveSongs caps a member to its SHARE of that pool (see songRotationCap) - a SwS
+	// and a BD in the same party split it instead of evicting each other's music in an endless re-cast loop.
 	private static final int SONG_REFRESH_SECONDS = 15;
-	private static final int SONG_ROTATION_MAX = 3;
+	private static final int MUSIC_POOL_SLOTS = 12; // MaxDanceAmount: songs + dances share one 12-slot pool per target
+	// All Interlude songs are party buffs, so the singer auto-maintains every one it has learned (best-value first;
+	// resolveSongs filters to what it actually knows). A specific song can also be asked for by name (requestedSong).
 	private static final int[] SINGER_SONGS =
 	{
-		269, // Song of Hunter (crit rate - lvl 49)
-		264, // Song of Earth (p.def - lvl 55)
-		304, // Song of Vitality (max HP - lvl 66)
-		267 // Song of Warding (m.def - lvl 40)
+		269, // Song of Hunter (crit rate)
+		264, // Song of Earth (p.def)
+		304, // Song of Vitality (max HP)
+		267, // Song of Warding (m.def)
+		268, // Song of Wind (speed)
+		305, // Song of Vengeance (damage reflect)
+		270, // Song of Invocation (max MP)
+		265, // Song of Life (HP regen)
+		306, // Song of Flame Guard (fire resist)
+		308, // Song of Storm Guard (wind resist)
+		266, // Song of Water (water resist)
+		349, // Song of Renewal (shorter re-use/cast penalties)
+		363, // Song of Meditation (MP regen)
+		364 // Song of Champion (P.Atk / Atk. speed)
 	};
+	// Bladedancer dances, melee-comp order. Party-beneficial dances only: the self-only Siren's Dance (365) and
+	// Dance of Shadows (366, silent-move), and the offensive Dance of Medusa (367, enemy petrify), are left OUT of
+	// the auto rotation - they are still castable on an explicit by-name request (requestedSong).
 	private static final int[] DANCER_DANCES =
 	{
-		275, // Dance of Fury (atk. speed - lvl 58)
-		271, // Dance of the Warrior (p.atk - lvl 55)
-		274 // Dance of Fire (crit damage - lvl 40)
+		275, // Dance of Fury (atk. speed)
+		271, // Dance of the Warrior (p.atk)
+		274, // Dance of Fire (crit damage)
+		310, // Dance of the Vampire (HP drain on hit)
+		276, // Dance of Concentration (cast speed)
+		273, // Dance of the Mystic (m.atk)
+		272, // Dance of Inspiration (bow power)
+		277, // Dance of Light
+		311, // Dance of Protection
+		307, // Dance of Aqua Guard (water resist)
+		309 // Dance of Earth Guard (earth resist)
 	};
 	private static final int[] DANCER_DANCES_MAGE = // mage-heavy comp: feed the casters first
 	{
-		273, // Dance of the Mystic (m.atk - lvl 49)
-		276, // Dance of Concentration (cast speed - lvl 52)
-		275 // Dance of Fury
+		273, // Dance of the Mystic (m.atk)
+		276, // Dance of Concentration (cast speed)
+		275, // Dance of Fury (atk. speed)
+		271, // Dance of the Warrior (p.atk)
+		274, // Dance of Fire (crit damage)
+		310, // Dance of the Vampire (HP drain on hit)
+		272, // Dance of Inspiration (bow power)
+		277, // Dance of Light
+		311, // Dance of Protection
+		307, // Dance of Aqua Guard (water resist)
+		309 // Dance of Earth Guard (earth resist)
 	};
 	// TANK panic button: Ultimate Defense, hand-cast at low HP while still being hit - instead of the AutoUse
 	// auto-buff loop burning it the moment it's off cooldown (it's a SELF-target buff, so registerAutoSkills
@@ -350,9 +383,10 @@ public class PhantomPartyManager
 		long moveDelayUntil; // the pending start-up stagger; 0 when none
 		int lastDestX; // last formation destination actually issued, to avoid re-pathing to the same spot
 		int lastDestY;
-		List<Skill> songs; // lazy (SINGER/DANCER): the up-to-3 songs/dances this member keeps running
+		List<Skill> songs; // lazy (SINGER/DANCER): the full learned song/dance kit this member keeps running (capped to its music-pool share)
 		boolean songsLookedUp;
 		boolean songsRequested; // explicit "sing"/"dance" order: run the rotation now even out of combat
+		Skill pendingSong; // explicit "<song/dance> by name" order (SINGER/DANCER): cast that exact one next tick, even if it's outside the auto rotation
 		Skill survival; // lazy (TANK): Ultimate Defense, hand-cast at low HP (parked out of the auto-buff loop)
 		boolean survivalLookedUp;
 		Skill cc; // lazy (NUKER): Sleep / Dryad Root for a loose add
@@ -763,6 +797,21 @@ public class PhantomPartyManager
 				{
 					deliver(state, "i don't have " + requested);
 				}
+				return true;
+			}
+		}
+
+		// On-demand SPECIFIC song/dance by name ("sing song of wind", "dance of fire pls", "give me fury"): cast that
+		// exact one next tick, even if it's outside the auto rotation (e.g. Dance of Medusa). Checked BEFORE the
+		// generic "sing"/"dance" trigger below so a named request casts that one song, not the whole rotation. It
+		// resolves against the member's own learned skills, so a singer only answers song names and a dancer dances.
+		if ((state.role == PartyRole.SINGER) || (state.role == PartyRole.DANCER))
+		{
+			final Skill namedSong = requestedSong(state.npc, text);
+			if (namedSong != null)
+			{
+				state.pendingSong = namedSong;
+				deliver(state, ((state.role == PartyRole.SINGER) ? "singing " : "dancing ") + namedSong.getName().toLowerCase());
 				return true;
 			}
 		}
@@ -1513,6 +1562,24 @@ public class PhantomPartyManager
 		if (DEBUG)
 		{
 			LOGGER.info("PARTY-RAID " + line);
+		}
+	}
+
+	/**
+	 * Diagnostic: logs every buff a support phantom actually casts, so we can see exactly what a buffer is doing (and
+	 * spot a re-cast loop, e.g. two different skills fighting over the same abnormal slot). Toggle with the existing
+	 * {@code //phantom debug on|off}. {@code via} says which path issued it (upkeep / rebuff / on-demand).
+	 */
+	private void dbgBuff(Player npc, Player target, Skill buff, String via)
+	{
+		if (DEBUG && (buff != null))
+		{
+			final BuffInfo existing = (target == null) ? null : target.getEffectList().getBuffInfoBySkillId(buff.getId());
+			final BuffInfo slot = ((target == null) || (buff.getAbnormalType() == null)) ? null : target.getEffectList().getBuffInfoByAbnormalType(buff.getAbnormalType());
+			LOGGER.info("PARTY-BUFF " + npc.getName() + " -> " + (target == null ? "?" : target.getName()) //
+				+ " : " + buff.getName() + " (id " + buff.getId() + " lvl " + buff.getLevel() + ", abnormal " + buff.getAbnormalType() + ") [" + via + "]" //
+				+ " | this-buff " + (existing == null ? "absent" : existing.getTime() + "s left") //
+				+ " | abnormal-slot held by " + ((slot == null) ? "nothing" : (slot.getSkill().getName() + " id " + slot.getSkill().getId())));
 		}
 	}
 
@@ -2735,10 +2802,11 @@ public class PhantomPartyManager
 	// ===== Class competence (Bucket 2): songs/dances, panic buttons, discipline, positioning, CC =====
 
 	/**
-	 * SWS/BD song/dance upkeep. Resolves the member's rotation once (the role's priority list filtered to what it
-	 * actually knows, capped at {@value #SONG_ROTATION_MAX} - each cast is ~60 MP and 2.5s of not fighting); then
-	 * each tick the first song whose effect is missing or about to lapse on the member itself is recast on the
-	 * party. Below 2nd class (no songs known yet) this costs nothing after the first lookup.
+	 * SWS/BD song/dance upkeep. First honours any explicit by-name request ({@link Member#pendingSong}); otherwise
+	 * resolves the member's rotation once (the role's priority list filtered to what it actually knows, capped at its
+	 * music-pool share by {@link #songRotationCap}); then each tick the first song whose effect is missing or about
+	 * to lapse on the member itself is recast on the party. Below 2nd class (no songs known yet) this costs nothing
+	 * after the first lookup.
 	 * @return {@code true} if a song is mid-cast or was just fired - the caller skips fighting this tick
 	 */
 	private boolean maintainSongs(Member state)
@@ -2748,6 +2816,28 @@ public class PhantomPartyManager
 			return false;
 		}
 		final Player npc = state.npc;
+		if (npc.isCastingNow())
+		{
+			return true; // a song is mid-cast - don't clobber it with an attack intention
+		}
+		// On-demand SPECIFIC song/dance ("dance of fire pls"): cast it now, in or out of combat, even if it's outside
+		// the auto rotation. Handled before the fight-time gate so a named request lands while resting too.
+		if (state.pendingSong != null)
+		{
+			final Skill song = state.pendingSong;
+			if (castable(npc, song))
+			{
+				if (!readyToCast(npc))
+				{
+					return true; // stand up first; cast next tick (pendingSong kept so the order isn't lost)
+				}
+				state.pendingSong = null;
+				npc.setTarget(npc);
+				npc.doCast(song);
+				return true;
+			}
+			state.pendingSong = null; // can't cast it right now (out of MP / disabled / dancer without duals) - drop it
+		}
 		if (!state.songsLookedUp)
 		{
 			state.songsLookedUp = true;
@@ -2763,10 +2853,6 @@ public class PhantomPartyManager
 		if (!state.songsRequested && !npc.isInCombat() && !((state.owner != null) && state.owner.isInCombat()) && !raidEngaged(state))
 		{
 			return false;
-		}
-		if (npc.isCastingNow())
-		{
-			return true; // a song is mid-cast - don't clobber it with an attack intention
 		}
 		for (Skill song : state.songs)
 		{
@@ -2788,9 +2874,10 @@ public class PhantomPartyManager
 
 	/**
 	 * The songs/dances this member will keep running: its role's priority list (dancers feed the casters first in
-	 * a mage-heavy comp), filtered to what it actually knows, capped at {@value #SONG_ROTATION_MAX}. A dancer
-	 * holding anything but dual swords gets no rotation at all - every dance hard-requires equipped duals
-	 * ({@code <using kind="DUAL"/>}), so trying would just wedge it in a rejected-cast loop instead of fighting.
+	 * a mage-heavy comp), filtered to what it actually knows, capped at its share of the music pool (see
+	 * {@link #songRotationCap}). A dancer holding anything but dual swords gets no rotation at all - every dance
+	 * hard-requires equipped duals ({@code <using kind="DUAL"/>}), so trying would just wedge it in a rejected-cast
+	 * loop instead of fighting.
 	 */
 	private List<Skill> resolveSongs(Member state)
 	{
@@ -2809,6 +2896,7 @@ public class PhantomPartyManager
 		{
 			priority = SINGER_SONGS;
 		}
+		final int cap = songRotationCap(state);
 		final List<Skill> songs = new ArrayList<>();
 		for (int id : priority)
 		{
@@ -2816,13 +2904,76 @@ public class PhantomPartyManager
 			if (known != null)
 			{
 				songs.add(known);
-				if (songs.size() >= SONG_ROTATION_MAX)
+				if (songs.size() >= cap)
 				{
 					break;
 				}
 			}
 		}
 		return songs;
+	}
+
+	/**
+	 * How many songs/dances this member keeps up automatically: its share of the target's
+	 * {@value #MUSIC_POOL_SLOTS}-slot music pool (MaxDanceAmount). Songs and dances share that one pool and evict
+	 * oldest-first when it overflows, so when the party fields more than one music class (a SwS AND a BD) the pool
+	 * is split between them - otherwise their full rotations would keep evicting each other on shared targets in an
+	 * endless re-cast loop. Solo music class: the whole pool (still bounded by what the member has actually learned,
+	 * which resolveSongs applies). Members are all recruited before the first fight, so this count is stable by the
+	 * time the rotation is resolved.
+	 */
+	private int songRotationCap(Member state)
+	{
+		int musicClasses = 0;
+		for (Member m : _members.values())
+		{
+			if ((m.owner == state.owner) && ((m.role == PartyRole.SINGER) || (m.role == PartyRole.DANCER)))
+			{
+				musicClasses++;
+			}
+		}
+		return Math.max(1, MUSIC_POOL_SLOTS / Math.max(1, musicClasses));
+	}
+
+	/**
+	 * A specific song/dance the message asks for by name, resolved against what this member actually knows (so a
+	 * singer only matches songs and a dancer only dances). Matches the full skill name ("dance of fire") or its
+	 * distinctive word ("fire", "fury", "vampire", "hunter"), so "sing song of wind", "dance of the vampire" and
+	 * "give me fury" all resolve. Longest match wins. Returns {@code null} if the line names no song/dance it knows.
+	 */
+	private static Skill requestedSong(Player npc, String text)
+	{
+		final String message = normalizeWords(text);
+		Skill best = null;
+		int bestLength = 0;
+		for (Skill skill : npc.getAllSkills())
+		{
+			if ((skill == null) || !skill.isDance()) // songs and dances both report isDance() == true
+			{
+				continue;
+			}
+			final String name = normalizeWords(skill.getName()); // e.g. " dance of fire "
+			if (message.contains(name) && (name.length() > bestLength))
+			{
+				best = skill;
+				bestLength = name.length();
+				continue;
+			}
+			// Distinctive tail: drop a leading "song of (the) " / "dance of (the) " so "fire"/"vampire"/"hunter" match.
+			final String tail = normalizeWords(skill.getName().toLowerCase().replaceFirst("^(song|dance) of (the )?", ""));
+			if ((tail.trim().length() >= 4) && message.contains(tail) && (tail.length() > bestLength))
+			{
+				best = skill;
+				bestLength = tail.length();
+			}
+		}
+		return best;
+	}
+
+	/** Lowercases, strips punctuation and collapses whitespace, wrapped in single spaces for whole-word contains-checks. */
+	private static String normalizeWords(String text)
+	{
+		return " " + text.toLowerCase().replaceAll("[^a-z0-9 ]", " ").replaceAll("\\s+", " ").trim() + " ";
 	}
 
 	/** How caster-heavy this party is: a mage leader plus its nuker members (drives the dancer's rotation choice). */
@@ -3248,6 +3399,7 @@ public class PhantomPartyManager
 				{
 					return; // another support (or the buddy) is already landing this exact buff on the target
 				}
+				dbgBuff(npc, target, buff, "on-demand");
 				npc.setTarget(target);
 				npc.doCast(buff);
 				return;
@@ -4039,6 +4191,7 @@ public class PhantomPartyManager
 						continue;
 					}
 					state.rebuffIdx++;
+					dbgBuff(npc, target, buff, "rebuff");
 					npc.setTarget(target);
 					npc.doCast(buff);
 					return true;
@@ -4068,8 +4221,13 @@ public class PhantomPartyManager
 			{
 				continue; // wrong archetype, out of MP, or out of the buff's reagent (don't loop re-casting a buff that will be rejected)
 			}
-			final BuffInfo info = target.getEffectList().getBuffInfoBySkillId(buff.getId());
-			if ((info == null) || (info.getTime() <= BUFF_REFRESH_SECONDS))
+			// Presence keys on the abnormal SLOT + LEVEL, not the skill id - see PhantomBuffs.needsBuff. Different
+			// buffer classes fill one slot with different skills (PD_UP is Shield 1040 / Chant of Shielding 1009 /
+			// Blessings of Pa'agrio 1005), so keying on id looped a mixed-buffer party forever; and a STRONGER effect
+			// already in the slot (a P.Atk herb over a low-level Might) would make an id/any-occupant check re-cast a
+			// buff the engine keeps rejecting. needsBuff skips an equal-or-stronger slot, upgrades a weaker one, and
+			// refreshes near expiry - so no loop, whatever is holding the slot.
+			if (PhantomBuffs.needsBuff(target, buff, BUFF_REFRESH_SECONDS))
 			{
 				if (beingBuffedByAnother(state, target, buff))
 				{
@@ -4083,6 +4241,7 @@ public class PhantomPartyManager
 				{
 					continue; // another bot buffer (party support or the personal buddy) is already landing this exact buff
 				}
+				dbgBuff(npc, target, buff, "upkeep");
 				npc.setTarget(target);
 				npc.doCast(buff);
 				return true;
