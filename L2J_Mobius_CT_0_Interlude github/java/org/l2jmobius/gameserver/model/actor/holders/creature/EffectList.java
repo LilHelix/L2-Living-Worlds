@@ -529,6 +529,34 @@ public class EffectList
 	{
 		stopAndRemove(broadcast, SkillFinishType.REMOVED, info, effects);
 	}
+
+	/**
+	 * Removes the oldest in-use effect from {@code pool} to free a slot for a new one. Buffs and songs/dances are
+	 * trimmed within their OWN pool ({@link #_buffs} or {@link #_dances}) so the two never displace each other.
+	 * @param pool the effect queue to trim
+	 */
+	private void evictOldestInUse(Queue<BuffInfo> pool)
+	{
+		BuffInfo toRemove = null;
+		for (BuffInfo info : pool)
+		{
+			if (!info.isInUse())
+			{
+				continue;
+			}
+
+			// Track the oldest (earliest started) in-use effect to be removed.
+			if ((toRemove == null) || (info.getPeriodStartTicks() < toRemove.getPeriodStartTicks()))
+			{
+				toRemove = info;
+			}
+		}
+
+		if (toRemove != null)
+		{
+			stopAndRemove(true, toRemove, pool);
+		}
+	}
 	
 	/**
 	 * Auxiliary method to stop all effects from a buff info and remove it from an effect list and stacked effects.
@@ -1374,50 +1402,24 @@ public class EffectList
 		// Select the map that holds the effects related to this skill.
 		final Queue<BuffInfo> effects = getEffectList(skill);
 		
-		// Remove first buff when buff list is full.
+		// Remove the oldest effect when a pool is full. Regular buffs and songs/dances have SEPARATE pools in retail
+		// Interlude: 20 buff slots (MaxBuffAmount, +Divine Inspiration) AND a distinct 12 song/dance pool
+		// (MaxDanceAmount), for up to 32 simultaneous effects - not a single shared 20. So a Sword Singer's songs or
+		// a Bladedancer's dances must NOT eat into a buffer's 20 slots (and vice-versa). Each pool is counted and
+		// trimmed on its own: a full buff pool evicts only the oldest buff, a full dance pool only the oldest dance -
+		// they never displace each other.
 		if (!skill.isDebuff() && !skill.isToggle() && !skill.is7Signs() && !doesStack(skill))
 		{
-			final int totalBuffs = getBuffCount() + getDanceCount();
-			final int maxTotalBuffs = _owner.getStat().getMaxBuffCount();
-			final int maxDances = PlayerConfig.DANCES_MAX_AMOUNT;
-			final int currentDances = getDanceCount();
-			if (((totalBuffs >= maxTotalBuffs) && !skill.isHealingPotionSkill()) || (skill.isDance() && (currentDances >= maxDances)))
+			if (skill.isDance())
 			{
-				// New list counting buff and dances/song all together.
-				final List<BuffInfo> allEffects = new ArrayList<>();
-				allEffects.addAll(_buffs);
-				allEffects.addAll(_dances);
-				
-				BuffInfo toRemove = null;
-				for (BuffInfo buffInfo : allEffects)
+				if (getDanceCount() >= PlayerConfig.DANCES_MAX_AMOUNT)
 				{
-					if (!buffInfo.isInUse())
-					{
-						continue;
-					}
-					
-					// Check if limit of dance/song is exceeded.
-					if (skill.isDance() && (currentDances >= maxDances) && !buffInfo.getSkill().isDance())
-					{
-						continue;
-					}
-					
-					// Check the oldest buff to be removed.
-					if ((toRemove == null) || (buffInfo.getPeriodStartTicks() < toRemove.getPeriodStartTicks()))
-					{
-						toRemove = buffInfo;
-					}
+					evictOldestInUse(_dances);
 				}
-				
-				if (toRemove != null)
-				{
-					final Queue<BuffInfo> list = getEffectList(toRemove.getSkill());
-					if (list != null)
-					{
-						list.remove(toRemove);
-						stopAndRemove(true, toRemove, list);
-					}
-				}
+			}
+			else if ((getBuffCount() >= _owner.getStat().getMaxBuffCount()) && !skill.isHealingPotionSkill())
+			{
+				evictOldestInUse(_buffs);
 			}
 		}
 		

@@ -589,11 +589,21 @@ public class FakePlayerChatManager implements IXmlReader
 		// LFM/LFP: a real player looking for party members. Parse the wanted roles and recruit a party that walks
 		// over (works brain-off via keywords; with the brain online a free-form call is classified for its roles).
 		// On a recruit we do NOT also run plain shout banter - the answer IS the bots showing up.
-		final List<Recruit> roles = parseLfp(text);
+		final List<String> unresolved = new ArrayList<>();
+		final List<Recruit> roles = parseLfp(text, unresolved);
 		final int wantedLevel = parseLfpLevel(text); // optional "lvl 57"; 0 = match the recruiter's level
 		if (!roles.isEmpty())
 		{
 			PhantomPartyManager.getInstance().recruitFromShout(speaker, roles, wantedLevel);
+			if (!unresolved.isEmpty())
+			{
+				whisperRecruitClarification(speaker, unresolved); // recruited what we could read; ask about the garbled one(s)
+			}
+			return;
+		}
+		if (!unresolved.isEmpty())
+		{
+			whisperRecruitClarification(speaker, unresolved); // a party call whose class word(s) we couldn't read - ask, don't spawn a default
 			return;
 		}
 		if (looksLikeLfp(text))
@@ -634,35 +644,81 @@ public class FakePlayerChatManager implements IXmlReader
 		return FakePlayerChatParsing.parseLfpLevel(text);
 	}
 
-	// Specific occupations a player can request by name ("shillien elder", "gladiator"), longest-first so a
-	// multi-word class wins over a shorter substring, with a combined word-boundary pattern to match them.
+	// Specific occupations a player can request by name ("shillien elder", "gladiator") OR by community alias
+	// ("se", "wc", "ee"). An alias resolves to the EXACT class it means, so "lfm se" spawns a Shillien Elder and
+	// "lfm wc" a Warcryer instead of the role's default class (an Elven Elder / a Prophet) - the tester's "aliases
+	// give the wrong mob" bug. Matched longest-first so a multi-word class wins over a shorter substring.
 	private static final Map<String, PlayerClass> CLASS_BY_NAME = new LinkedHashMap<>();
 	private static final Pattern CLASS_PATTERN;
+	// Single-word class names/aliases a one-typo fuzzy match may correct to, restricted to the DISTINCTIVE ones
+	// (6+ letters) so an ordinary shout word is never mistaken for a class: e.g. "party"/"more"/"danger"/"fast"
+	// stay clear of "pally"/"muse"/"dancer"/"fist". Generic role words ("tank", "dd", "healer") are matched only
+	// exactly by PartyRole.fromToken - they are short, common, and easy to type, and fuzzing them collides with
+	// everyday words. Multi-word class names ("shillien elder") are matched only exactly, by CLASS_PATTERN.
+	private static final Set<String> CLASS_FUZZY;
 	static
 	{
-		final List<PlayerClass> classes = new ArrayList<>();
 		for (PlayerClass pc : PlayerClass.values())
 		{
 			if (PhantomManager.isSelectableClass(pc)) // 2nd+ occupations only; base/1st fall through to role tokens
 			{
-				classes.add(pc);
+				CLASS_BY_NAME.put(pc.name().toLowerCase().replace('_', ' '), pc);
 			}
 		}
-		classes.sort((a, b) -> Integer.compare(b.name().length(), a.name().length()));
+		// Community aliases -> the exact class they name (the value must be a full-name key added just above).
+		putClassAlias("pp", "prophet");
+		putClassAlias("wc", "warcryer");
+		putClassAlias("dc", "doomcryer");
+		putClassAlias("ol", "overlord");
+		putClassAlias("dom", "dominator");
+		putClassAlias("ee", "elder"); // Elven Elder
+		putClassAlias("se", "shillien elder");
+		putClassAlias("shil", "shillien elder");
+		putClassAlias("shillien", "shillien elder"); // in a support call "shillien" reads as Shillien Elder
+		putClassAlias("bp", "bishop");
+		putClassAlias("bish", "bishop");
+		putClassAlias("card", "cardinal");
+		putClassAlias("hiero", "hierophant");
+		putClassAlias("eva", "eva saint");
+		putClassAlias("evas", "eva saint");
+		putClassAlias("muse", "sword muse");
+		putClassAlias("sws", "swordsinger");
+		putClassAlias("bd", "bladedancer");
+		putClassAlias("spectral", "spectral dancer");
+		// Build the exact-match pattern from every key (names + aliases), longest first so a multi-word class wins
+		// over a shorter substring. Trailing "s?" so a plural request ("2 bishops", "3 hawkeyes") still matches.
+		final List<String> keys = new ArrayList<>(CLASS_BY_NAME.keySet());
+		keys.sort((a, b) -> Integer.compare(b.length(), a.length()));
 		final StringBuilder sb = new StringBuilder();
-		for (PlayerClass pc : classes)
+		for (String key : keys)
 		{
-			final String name = pc.name().toLowerCase().replace('_', ' ');
-			CLASS_BY_NAME.put(name, pc);
 			if (sb.length() > 0)
 			{
 				sb.append('|');
 			}
-			sb.append(Pattern.quote(name));
+			sb.append(Pattern.quote(key));
 		}
-		// Trailing "s?" so a plural class request ("2 bishops", "3 hawkeyes") still matches the class by name instead
-		// of falling through to the generic role token (which would spawn the default class, e.g. an Elven Elder).
 		CLASS_PATTERN = Pattern.compile("\\b(" + sb + ")s?\\b", Pattern.CASE_INSENSITIVE);
+		// Fuzzy targets: distinctive single-word class keys/aliases only (6+ letters).
+		final Set<String> fuzzy = new HashSet<>();
+		for (String key : CLASS_BY_NAME.keySet())
+		{
+			if ((key.indexOf(' ') < 0) && (key.length() >= 6))
+			{
+				fuzzy.add(key);
+			}
+		}
+		CLASS_FUZZY = Set.copyOf(fuzzy);
+	}
+
+	/** Registers a community alias -&gt; the class named by an existing full-name key (no-op if the name is unknown). */
+	private static void putClassAlias(String alias, String canonicalName)
+	{
+		final PlayerClass pc = CLASS_BY_NAME.get(canonicalName);
+		if (pc != null)
+		{
+			CLASS_BY_NAME.put(alias, pc);
+		}
 	}
 
 	/**
@@ -670,7 +726,7 @@ public class FakePlayerChatManager implements IXmlReader
 	 * elder") become that exact class; generic role words ("2 dd + healer") become level-appropriate roles.
 	 * Numbers before a class/role repeat it. Empty when the line is not an explicit party call.
 	 */
-	private static List<Recruit> parseLfp(String text)
+	private static List<Recruit> parseLfp(String text, List<String> unresolvedOut)
 	{
 		final List<Recruit> recruits = new ArrayList<>();
 		if (!looksLikeLfp(text))
@@ -699,25 +755,95 @@ public class FakePlayerChatManager implements IXmlReader
 			}
 		}
 
-		// Phase 2: generic role words on whatever text is left. The pure counting state machine (level-token
-		// skipping, per-word counts) lives in FakePlayerChatParsing; here we just resolve each token to a role.
+		// Phase 2: generic role words + one-typo tolerance on whatever text is left. The pure counting state machine
+		// (level-token skipping, per-word counts) lives in FakePlayerChatParsing; here we resolve each token to a
+		// class/role, forgive a single typo, and collect the ones that look like a garbled class so the caller can
+		// ask instead of silently spawning a wrong default.
 		for (FakePlayerChatParsing.RoleRequest request : FakePlayerChatParsing.parseRoleRequests(working.toString()))
 		{
-			// Match the word, falling back to its singular so plurals work ("2 mages", "2 healers", "tanks").
-			PartyRole role = PartyRole.fromToken(request.token);
-			if ((role == null) && (request.token.length() > 1) && request.token.endsWith("s"))
-			{
-				role = PartyRole.fromToken(request.token.substring(0, request.token.length() - 1));
-			}
-			if (role != null)
+			final Recruit resolved = resolveRecruitToken(request.token);
+			if (resolved != null)
 			{
 				for (int i = 0; (i < request.count) && (recruits.size() < 8); i++)
 				{
-					recruits.add(new Recruit(role, 0)); // 0 = the role's default level-appropriate class
+					recruits.add(resolved);
 				}
 			}
+			else if ((unresolvedOut != null) && looksLikeGarbledClass(request.token))
+			{
+				unresolvedOut.add(request.token); // close to a class/role but too garbled to be sure - ask, don't guess
+			}
+			// else: an ordinary non-role word ("cruma", "pls", "for") - ignore silently as before
 		}
 		return recruits;
+	}
+
+	/**
+	 * Resolves one phase-2 recruit token to a specific recruit: an exact class name/alias (spawns that class), an
+	 * exact generic role word (spawns the role's default class), or a single-typo correction of either. Plurals
+	 * fall back to their singular. Returns {@code null} when the word names no class/role - the caller decides
+	 * whether it is a garbled class worth a clarification, or just noise.
+	 */
+	private static Recruit resolveRecruitToken(String token)
+	{
+		// Exact class name/alias (phase 1 blanks these, but a plural or an alias by punctuation can survive).
+		PlayerClass pc = classByNameOrSingular(token);
+		if (pc != null)
+		{
+			return new Recruit(PhantomManager.roleForClass(pc), pc.getId());
+		}
+		// Exact generic role word.
+		PartyRole role = roleByTokenOrSingular(token);
+		if (role != null)
+		{
+			return new Recruit(role, 0); // 0 = the role's default level-appropriate class
+		}
+		// One-typo correction against the distinctive class names ("warcyer" -> "warcryer", "bishpo" -> "bishop").
+		final String near = FakePlayerChatParsing.nearestWithin(token, CLASS_FUZZY, FakePlayerChatParsing.fuzzyBudget(token.length()));
+		if (near != null)
+		{
+			pc = CLASS_BY_NAME.get(near);
+			if (pc != null)
+			{
+				return new Recruit(PhantomManager.roleForClass(pc), pc.getId());
+			}
+		}
+		return null;
+	}
+
+	private static PlayerClass classByNameOrSingular(String token)
+	{
+		PlayerClass pc = CLASS_BY_NAME.get(token);
+		if ((pc == null) && (token.length() > 1) && token.endsWith("s"))
+		{
+			pc = CLASS_BY_NAME.get(token.substring(0, token.length() - 1));
+		}
+		return pc;
+	}
+
+	private static PartyRole roleByTokenOrSingular(String token)
+	{
+		PartyRole role = PartyRole.fromToken(token);
+		if ((role == null) && (token.length() > 1) && token.endsWith("s"))
+		{
+			role = PartyRole.fromToken(token.substring(0, token.length() - 1));
+		}
+		return role;
+	}
+
+	/**
+	 * @return {@code true} if an unresolved token is close enough to a distinctive class name to be a garbled
+	 *         request worth a clarification whisper (rather than an ordinary word in the shout) - within one edit
+	 *         over the auto-correct budget of a 6+ letter class name. Ordinary shout words ("party", "more",
+	 *         "danger") stay clear of the distinctive class set, so they never trigger a spurious "which class?".
+	 */
+	private static boolean looksLikeGarbledClass(String token)
+	{
+		if ((token == null) || (token.length() < 4))
+		{
+			return false; // too short to tell a typo'd class from an ordinary word
+		}
+		return FakePlayerChatParsing.minDistance(token, CLASS_FUZZY) <= (FakePlayerChatParsing.fuzzyBudget(token.length()) + 1);
 	}
 
 	/** @return the count number immediately before position {@code pos} in the text (e.g. "2 dd" -> 2), else 1. */
@@ -744,6 +870,95 @@ public class FakePlayerChatManager implements IXmlReader
 			}
 		}
 		return recruits;
+	}
+
+	/**
+	 * A nearby fake player whispers the recruiter to clarify the class word(s) the recruit parser couldn't read,
+	 * rather than silently spawning the wrong "default" class. Handles the mixed case too: when a shout asked for
+	 * several classes and only one or two were garbled, the readable ones are already being recruited and this only
+	 * asks about the rest. Rate-limited like other public bot chatter; if no fake player is around to voice it, a
+	 * plain "Party" system whisper still gives the player an answer.
+	 */
+	private void whisperRecruitClarification(Player speaker, List<String> tokens)
+	{
+		if ((speaker == null) || (tokens == null) || tokens.isEmpty() || (MESSAGES_THIS_MINUTE.get() >= MAX_MESSAGES_PER_MINUTE))
+		{
+			return;
+		}
+		final String line = recruitClarifyLine(tokens);
+		final Npc voice = pickShoutResponder(speaker);
+		MESSAGES_THIS_MINUTE.incrementAndGet();
+		if (voice != null)
+		{
+			sendChat(speaker, voice.getName(), line); // reuses the length-scaled "typing" whisper path
+		}
+		else
+		{
+			speaker.sendPacket(new CreatureSay(speaker, ChatType.WHISPER, "Party", line));
+		}
+	}
+
+	/** Builds the clarification line naming the class word(s) that couldn't be read (de-duped, at most three). */
+	private static String recruitClarifyLine(List<String> tokens)
+	{
+		final List<String> shown = new ArrayList<>();
+		for (String token : tokens)
+		{
+			if (!shown.contains(token))
+			{
+				shown.add(token);
+			}
+			if (shown.size() >= 3)
+			{
+				break;
+			}
+		}
+		if (shown.size() == 1)
+		{
+			return "which class did you want? didn't catch '" + shown.get(0) + "'";
+		}
+		final StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < shown.size(); i++)
+		{
+			if (i > 0)
+			{
+				sb.append((i == (shown.size() - 1)) ? " or " : ", ");
+			}
+			sb.append('\'').append(shown.get(i)).append('\'');
+		}
+		return "which classes did you want? didn't catch " + sb;
+	}
+
+	/** Picks a fake player to voice a recruit clarification: one near the recruiter, else any online fake player. */
+	private Npc pickShoutResponder(Player speaker)
+	{
+		final String speakerName = speaker.getName();
+		final List<Npc> near = new ArrayList<>();
+		World.getInstance().forEachVisibleObjectInRange(speaker, Npc.class, SOCIAL_RANGE, npc ->
+		{
+			if (npc.isFakePlayer() && !isStoreVendor(npc) && !npc.getName().equals(speakerName))
+			{
+				near.add(npc);
+			}
+		});
+		if (!near.isEmpty())
+		{
+			return near.get(Rnd.get(near.size()));
+		}
+		final List<Npc> all = new ArrayList<>();
+		final Set<String> seen = new HashSet<>();
+		for (WorldObject object : World.getInstance().getVisibleObjects())
+		{
+			if (object.isNpc())
+			{
+				final Npc npc = object.asNpc();
+				if (npc.isFakePlayer() && !isStoreVendor(npc) && !npc.getName().equals(speakerName) && seen.add(npc.getName()))
+				{
+					all.add(npc);
+				}
+			}
+		}
+		return all.isEmpty() ? null : all.get(Rnd.get(all.size()));
 	}
 
 	/**
