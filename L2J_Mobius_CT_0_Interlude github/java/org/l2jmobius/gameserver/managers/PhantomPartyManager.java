@@ -141,7 +141,7 @@ public class PhantomPartyManager
 	private static final long OFFLINE_GRACE = 120000;
 	private static final long BRB_GRACE = 360000;
 	private static final long CORPSE_GRACE = 60000; // keep a fallen member as a raisable corpse this long before despawning it
-	private static final long RES_CLAIM_MS = 4500; // one healer claims a corpse long enough for the cast/request to land
+	private static final int RES_CLAIM_MS = 4500; // one rezzer claims a corpse long enough for the cast/request to land
 	private static final long POST_RES_HOLD_MS = 6500; // after a tank battle-res, hold DPS while it is healed and regains hate
 	private static final int POST_RES_TANK_READY_PERCENT = 85;
 	private static final int RES_SKILL_ID = 1016; // Resurrection (granted to healers on spawn)
@@ -316,14 +316,39 @@ public class PhantomPartyManager
 	private static final Pattern TAG_GRACE = Pattern.compile("\\[\\[\\s*GRACE\\s*:\\s*(\\d+)\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
 	private static final Pattern ANY_TAG = Pattern.compile("\\[\\[[^\\]]*[\\]\\)]{1,2}");
 
-	// Heal skills a support member may know, strongest first (same table the buddy manager uses).
-	private static final int[] HEAL_PRIORITY =
+	// FAST heals (2s cast) - the reactive workhorse for emergencies and combat spikes, where cast SPEED beats raw
+	// power (a slow heal can land after the target is already dead). Greater Battle Heal is exactly what defines a
+	// Bishop as a healer - fast spam healing - so it's the primary here, with base Battle Heal behind it. The slow
+	// (5s) big heals are deliberately kept OFF this path.
+	private static final int[] FAST_HEAL_PRIORITY =
+	{
+		1218, // Greater Battle Heal (2s cast) - the primary reactive heal
+		1015 // Battle Heal (2s cast)
+	};
+
+	// STRONG heals for a big but non-critical gap, where there's time to cast (5s). Greater Battle Heal still leads
+	// (a Bishop's fast casting makes it the default even here); Major Heal follows as the MP-smart option - it heals
+	// as much as Greater Battle Heal for less than half the MP (~48 vs ~108) at the cost of cast time + 1 Spirit Ore,
+	// so it doubles as the graceful fallback when the healer is low on MP; Greater Heal (5s, +HP-regen HoT) is last.
+	private static final int[] STRONG_HEAL_PRIORITY =
 	{
 		1218, // Greater Battle Heal
-		1217, // Greater Heal
-		1015, // Battle Heal
-		1011 // Heal
+		1401, // Major Heal (Bishop/Cardinal 56+, +1 Spirit Ore) - big heal, very MP-cheap; also the low-MP fallback
+		1217 // Greater Heal (+HP-regen HoT)
 	};
+
+	// Party/group heals a healer may know, strongest first. Cast only when SEVERAL members are hurt at once - these
+	// are slow (7s cast) with a long reuse (25s for 1027/1219), so they're a pre-emptive AoE-damage answer, not a
+	// reactive one; near-death members are covered by the fast emergency heal first. Major Group Heal eats Spirit Ore
+	// (the reagent guard steps down to a free group heal when the stock runs dry).
+	private static final int[] GROUP_HEAL_PRIORITY =
+	{
+		1402, // Major Group Heal (Bishop 58+, +4 Spirit Ore)
+		1219, // Greater Group Heal (Bishop 40+)
+		1027 // Group Heal (Cleric)
+	};
+	private static final int GROUP_HEAL_HP_PERCENT = 75; // a member below this HP% counts as "hurt" for a group heal
+	private static final int GROUP_HEAL_MIN_TARGETS = 3; // only worth a slow group heal when at least this many are hurt at once
 
 	// Cheap heals for small top-offs, weakest first - so a 15% tank top-off doesn't burn a Greater Battle Heal.
 	private static final int[] LIGHT_HEAL_PRIORITY =
@@ -349,9 +374,16 @@ public class PhantomPartyManager
 		long pendingSince; // spawn time; despawn if never invited within RECRUIT_TIMEOUT
 		long graceUntil;
 		List<Skill> buffs; // lazy
-		Skill heal; // lazy (strongest known heal, for real damage / emergencies)
+		List<Skill> fastHealKit; // lazy (known 2s-cast heals, best first); emergencyHeal() picks the strongest affordable
+		boolean fastHealLookedUp;
+		List<Skill> strongHealKit; // lazy (known big heals for non-critical gaps, best first)
+		boolean strongHealLookedUp;
+		List<Skill> groupHealKit; // lazy (all known party/group heals, strongest first)
+		boolean groupHealLookedUp;
 		Skill lightHeal; // lazy (cheapest known heal, for small top-offs)
-		Skill res; // lazy
+		boolean lightHealLookedUp;
+		Skill res; // lazy (any class that naturally learned Resurrection, not just the HEALER role)
+		boolean resLookedUp; // whether the res skill has been resolved from the known list yet
 		Skill aggression; // lazy (TANK): single-target taunt
 		Skill auraOfHate; // lazy (TANK): AoE taunt
 		boolean tauntLookedUp; // whether the two taunt skills have been resolved from the known list yet
@@ -460,7 +492,6 @@ public class PhantomPartyManager
 	// The old whole-fight release let archers swap from a tank-owned boss to an untanked Bat/Inferior and pull hate.
 	private final Set<Integer> _released = ConcurrentHashMap.newKeySet();
 	private final Set<Long> _releasedRaidTargets = ConcurrentHashMap.newKeySet();
-	private final ConcurrentHashMap<Integer, Long> _resClaims = new ConcurrentHashMap<>();
 	// ownerId -> first tick a raid check found no living tank. Cleared once a tank exists again or the raid
 	// gate resets (clearRaidRelease); see NO_TANK_FAILOPEN_MS.
 	private final ConcurrentHashMap<Integer, Long> _noTankSince = new ConcurrentHashMap<>();
@@ -536,7 +567,7 @@ public class PhantomPartyManager
 		final double angle = Rnd.nextDouble() * 2 * Math.PI;
 		final int distance = Rnd.get(APPROACH_MIN, APPROACH_MAX);
 		final Location anchor = new Location(leader.getX() + (int) (Math.cos(angle) * distance), leader.getY() + (int) (Math.sin(angle) * distance), leader.getZ());
-		final Player npc = PhantomManager.getInstance().spawnPartyMember(anchor, level, recruit.role, recruit.classId);
+		final Player npc = PhantomManager.getInstance().spawnPartyMember(anchor, level, recruit.role, recruit.classId, recruit.race);
 		if (npc == null)
 		{
 			return;
@@ -750,6 +781,39 @@ public class PhantomPartyManager
 		{
 			return;
 		}
+		// A request for a class-EXCLUSIVE ability (songs -> SINGER, dances -> DANCER) must only draw a reaction from
+		// the class that can actually do it: a buffer should never pipe up "i don't sing". So restrict the free-form
+		// reply pool to that class, and if the party has nobody of it, stay silent (nobody reacts) rather than have a
+		// wrong-class member answer. (When a capable member is present the deterministic song/dance path above usually
+		// handled it already; this catches phrasings that miss that trigger.)
+		final PartyRole onlyRole = classExclusiveRequestRole(lower);
+		if (onlyRole != null)
+		{
+			final List<Member> capable = new ArrayList<>();
+			for (Member state : (named.isEmpty() ? mine : named))
+			{
+				if (state.role == onlyRole)
+				{
+					capable.add(state);
+				}
+			}
+			if (capable.isEmpty())
+			{
+				return; // nobody in the party can do it - no wrong-class member reacts
+			}
+			if (named.isEmpty())
+			{
+				askBrainAsync(capable.get(Rnd.get(capable.size())), speaker, message);
+			}
+			else
+			{
+				for (Member state : capable)
+				{
+					askBrainAsync(state, speaker, message);
+				}
+			}
+			return;
+		}
 		// Free-form chatter: named members each answer; if nobody was named, one member replies so a full party
 		// doesn't all talk over each other.
 		if (!named.isEmpty())
@@ -763,6 +827,25 @@ public class PhantomPartyManager
 		{
 			askBrainAsync(mine.get(Rnd.get(mine.size())), speaker, message);
 		}
+	}
+
+	/**
+	 * @return the role that ALONE should react to a class-exclusive ability request in {@code lower} (SINGER for a
+	 *         song request, DANCER for a dance request), or {@code null} if the line asks for nothing class-exclusive.
+	 *         Uses the same conservative tokens as the deterministic song/dance triggers so ordinary chat ("using",
+	 *         "losing") isn't mistaken for a request.
+	 */
+	private static PartyRole classExclusiveRequestRole(String lower)
+	{
+		if (containsAny(lower, "song", "sing pls", "sing please"))
+		{
+			return PartyRole.SINGER;
+		}
+		if (containsAny(lower, "dance"))
+		{
+			return PartyRole.DANCER;
+		}
+		return null;
 	}
 
 	/**
@@ -1021,7 +1104,9 @@ public class PhantomPartyManager
 			}
 			if (containsAny(text, "res", "resurrect", "ress", "revive", "rez"))
 			{
-				deliver(state, "rezzing"); // the res loop raises a fallen member automatically
+				// The res loop raises a fallen member automatically - but only a member that actually knows
+				// Resurrection can, so don't promise a rez a pure buffer/DPS can't deliver.
+				deliver(state, (res(state) != null) ? "rezzing" : "i can't res, sorry");
 				return true;
 			}
 		}
@@ -1435,7 +1520,6 @@ public class PhantomPartyManager
 		// A healer's Resurrection lands as a revive *request* (ConfirmDlg) the corpse must accept - do it server-side.
 		if (npc.isReviveRequested())
 		{
-			_resClaims.remove(npc.getObjectId());
 			npc.reviveAnswer(1); // it stands on the next tick, where deadSince is cleared and it rejoins
 			return;
 		}
@@ -1452,9 +1536,9 @@ public class PhantomPartyManager
 				final Member mourner = pickPartiedMember(state.owner, m -> (m != state) && !m.npc.isDead());
 				if (mourner != null)
 				{
-					if ((mourner.role == PartyRole.HEALER) && (res(mourner) != null))
+					if (res(mourner) != null)
 					{
-						bark(mourner, npc.getName() + " of your party just died in combat. You're the healer with Resurrection - say one very short line that you'll res them.", "got you " + npc.getName() + ", rezzing");
+						bark(mourner, npc.getName() + " of your party just died in combat. You can resurrect - say one very short line that you'll res them.", "got you " + npc.getName() + ", rezzing");
 					}
 					else
 					{
@@ -1522,8 +1606,8 @@ public class PhantomPartyManager
 				if (state.deadSince != 0)
 				{
 					// Stood back up since last tick (a healer raised it): clear the corpse timer and rejoin the fight.
+					// The shared res claim carries its own expiry, so there is nothing to release here.
 					state.deadSince = 0;
-					_resClaims.remove(npc.getObjectId());
 					state.recoveryUntil = now + POST_RES_HOLD_MS;
 					if (state.role == PartyRole.TANK)
 					{
@@ -3411,7 +3495,7 @@ public class PhantomPartyManager
 		// On-demand "heal me": one heal on the leader even at full HP.
 		if (state.healNow)
 		{
-			final Skill onDemandHeal = heal(state);
+			final Skill onDemandHeal = emergencyHeal(state);
 			if ((onDemandHeal != null) && !owner.isDead() && !npc.isSkillDisabled(onDemandHeal) && (npc.getCurrentMp() >= onDemandHeal.getMpConsume()))
 			{
 				if (!readyToCast(npc))
@@ -3427,8 +3511,9 @@ public class PhantomPartyManager
 			state.healNow = false; // can't satisfy it right now
 		}
 
-		final Skill heal = heal(state);
-		// 1) Emergency heal first. A human healer does not start a res while the live tank is at 35%.
+		final Skill heal = emergencyHeal(state);
+		// 1) Emergency heal first. A human healer does not start a res while the live tank is at 35%. Fast heal only -
+		// a critically low member can die during a slow (5s) cast, so speed wins here even over a bigger heal.
 		if (heal != null)
 		{
 			final Player urgent = mostHurtBelow(state, CRITICAL_HEAL_PERCENT);
@@ -3484,9 +3569,9 @@ public class PhantomPartyManager
 				{
 					return; // getting up first; res on the next tick
 				}
-				if (!claimResTarget(corpse, now))
+				if (!PhantomBuffs.claimRes(corpse.getObjectId(), npc.getObjectId(), RES_CLAIM_MS))
 				{
-					return;
+					return; // a different rezzer (party healer/buffer or the personal buddy) is already raising it
 				}
 				dbg("RES " + npc.getName() + " rezzing " + roleLabel(corpse) + " '" + corpse.getName() + "'");
 				npc.setTarget(corpse);
@@ -3524,6 +3609,27 @@ public class PhantomPartyManager
 				npc.doCast(rech);
 				return;
 			}
+		}
+
+		// 3b) Group heal: when several party members in range are hurt at once, a single party heal (Group Heal /
+		// Greater Group Heal / Major Group Heal) tops them all far more cheaply than pecking them one at a time - the
+		// Bishop/Cardinal's signature party healing, which the support never did before. Near-death members are already
+		// covered by the emergency single heal above; this fires only at GROUP_HEAL_MIN_TARGETS+ hurt so it isn't wasted
+		// on one dip. A PARTY-target heal resolves the whole party from the caster, so it targets itself.
+		final Skill groupHeal = groupHeal(state);
+		if ((groupHeal != null) && (countHurtBelow(state, GROUP_HEAL_HP_PERCENT) >= GROUP_HEAL_MIN_TARGETS))
+		{
+			if (!readyToCast(npc))
+			{
+				return; // getting up first; group heal on the next tick
+			}
+			if (DEBUG && raid)
+			{
+				dbg("GROUPHEAL " + npc.getName() + " '" + groupHeal.getName() + "' (" + countHurtBelow(state, GROUP_HEAL_HP_PERCENT) + " hurt)");
+			}
+			npc.setTarget(npc);
+			npc.doCast(groupHeal);
+			return;
 		}
 
 		// 4) Heal. Under a raid this is pre-emptive and tank-first (a boss spike outruns reactive 60%-only healing):
@@ -3624,7 +3730,7 @@ public class PhantomPartyManager
 		Player botCorpse = null;
 		for (Player member : party.getMembers())
 		{
-			if ((member == npc) || !member.isDead() || member.isReviveRequested() || isResClaimed(member, now) || (npc.calculateDistance2D(member) > SUPPORT_RANGE))
+			if ((member == npc) || !member.isDead() || member.isReviveRequested() || PhantomBuffs.isResClaimed(member.getObjectId(), npc.getObjectId(), now) || (npc.calculateDistance2D(member) > SUPPORT_RANGE))
 			{
 				continue;
 			}
@@ -3638,33 +3744,6 @@ public class PhantomPartyManager
 			}
 		}
 		return botCorpse;
-	}
-
-	private boolean isResClaimed(Player corpse, long now)
-	{
-		final Long until = _resClaims.get(corpse.getObjectId());
-		if (until == null)
-		{
-			return false;
-		}
-		if (until <= now)
-		{
-			_resClaims.remove(corpse.getObjectId(), until);
-			return false;
-		}
-		return true;
-	}
-
-	private boolean claimResTarget(Player corpse, long now)
-	{
-		final int objectId = corpse.getObjectId();
-		final Long until = _resClaims.get(objectId);
-		if ((until != null) && (until > now))
-		{
-			return false;
-		}
-		_resClaims.put(objectId, now + RES_CLAIM_MS);
-		return true;
 	}
 
 	/**
@@ -4475,17 +4554,17 @@ public class PhantomPartyManager
 				mood.leaderLevel = level; // deleveled (death) - update silently, nobody congratulates that
 			}
 
-			// Leader went down: one member reacts once - the res-capable healer if there is one ("rezzing you").
+			// Leader went down: one member reacts once - a res-capable member if there is one ("rezzing you").
 			if (owner.isDead() && !mood.leaderDead)
 			{
 				mood.leaderDead = true;
-				final Member healer = pickFrom(members, m -> !m.npc.isDead() && (m.role == PartyRole.HEALER) && (res(m) != null));
-				final Member reactor = (healer != null) ? healer : pickFrom(members, m -> !m.npc.isDead());
+				final Member rezzer = pickFrom(members, m -> !m.npc.isDead() && (res(m) != null));
+				final Member reactor = (rezzer != null) ? rezzer : pickFrom(members, m -> !m.npc.isDead());
 				if (reactor != null)
 				{
-					if (reactor == healer)
+					if (reactor == rezzer)
 					{
-						cheer(reactor, "The party leader " + owner.getName() + " just died in combat. You're the healer with Resurrection - tell them in one very short line you'll res them.", "omg - got you, rezzing");
+						cheer(reactor, "The party leader " + owner.getName() + " just died in combat. You can resurrect - tell them in one very short line you'll res them.", "omg - got you, rezzing");
 					}
 					else
 					{
@@ -4649,28 +4728,81 @@ public class PhantomPartyManager
 		return state.buffs;
 	}
 
-	private Skill heal(Member state)
+	private List<Skill> resolveKit(Member state, int[] ids)
 	{
-		if (state.heal == null)
+		final List<Skill> list = new ArrayList<>();
+		for (int id : ids)
 		{
-			for (int id : HEAL_PRIORITY)
+			final Skill known = state.npc.getKnownSkill(id);
+			if (known != null)
 			{
-				final Skill known = state.npc.getKnownSkill(id);
-				if (known != null)
-				{
-					state.heal = known;
-					break;
-				}
+				list.add(known);
 			}
 		}
-		return state.heal;
+		return list;
 	}
 
-	/** The cheapest heal this support knows (for small top-offs); falls back to the strong heal if it knows no cheap one. */
+	/** Known fast (2s-cast) heals, best first (resolved once). */
+	private List<Skill> fastHealKit(Member state)
+	{
+		if (!state.fastHealLookedUp)
+		{
+			state.fastHealLookedUp = true;
+			state.fastHealKit = resolveKit(state, FAST_HEAL_PRIORITY);
+		}
+		return state.fastHealKit;
+	}
+
+	/** Known big heals for non-critical gaps, best first (resolved once). */
+	private List<Skill> strongHealKit(Member state)
+	{
+		if (!state.strongHealLookedUp)
+		{
+			state.strongHealLookedUp = true;
+			state.strongHealKit = resolveKit(state, STRONG_HEAL_PRIORITY);
+		}
+		return state.strongHealKit;
+	}
+
+	/** The first heal in {@code kit} the support can actually cast right now - not disabled, MP covered, reagent in stock. */
+	private Skill firstCastable(Member state, List<Skill> kit)
+	{
+		final Player npc = state.npc;
+		for (Skill s : kit)
+		{
+			if (!npc.isSkillDisabled(s) && (npc.getCurrentMp() >= s.getMpConsume()) && PhantomBuffs.canAffordReagent(npc, s))
+			{
+				return s;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * The best FAST heal the support can cast right now (Greater Battle Heal, then Battle Heal) - the reactive
+	 * workhorse for emergencies and combat spikes. Speed over power: never a slow (5s) heal here.
+	 */
+	private Skill emergencyHeal(Member state)
+	{
+		return firstCastable(state, fastHealKit(state));
+	}
+
+	/**
+	 * The best STRONG heal for a big, non-critical gap where there's time to cast: Greater Battle Heal, then Major
+	 * Heal (MP-cheap; also the low-MP fallback), then Greater Heal. Falls back to a fast heal if it knows no big one.
+	 */
+	private Skill strongHeal(Member state)
+	{
+		final Skill s = firstCastable(state, strongHealKit(state));
+		return (s != null) ? s : emergencyHeal(state);
+	}
+
+	/** The cheapest heal this support knows (for small top-offs); falls back to a fast heal if it knows no cheap one. */
 	private Skill lightHeal(Member state)
 	{
-		if (state.lightHeal == null)
+		if (!state.lightHealLookedUp)
 		{
+			state.lightHealLookedUp = true;
 			for (int id : LIGHT_HEAL_PRIORITY)
 			{
 				final Skill known = state.npc.getKnownSkill(id);
@@ -4682,42 +4814,116 @@ public class PhantomPartyManager
 			}
 			if (state.lightHeal == null)
 			{
-				state.lightHeal = heal(state); // no cheap heal known - just use the strong one
+				final List<Skill> kit = fastHealKit(state); // no cheap heal known - fall back to a fast heal it has
+				state.lightHeal = kit.isEmpty() ? null : kit.get(kit.size() - 1);
 			}
 		}
 		return state.lightHeal;
 	}
 
+	/** All party/group heals this support knows, strongest first (resolved once). */
+	private List<Skill> groupHealKit(Member state)
+	{
+		if (!state.groupHealLookedUp)
+		{
+			state.groupHealLookedUp = true;
+			final List<Skill> list = new ArrayList<>();
+			for (int id : GROUP_HEAL_PRIORITY)
+			{
+				final Skill known = state.npc.getKnownSkill(id);
+				if (known != null)
+				{
+					list.add(known);
+				}
+			}
+			state.groupHealKit = list;
+		}
+		return state.groupHealKit;
+	}
+
+	/** The strongest party/group heal the support can afford (MP + reagent) and cast right now, or {@code null}. */
+	private Skill groupHeal(Member state)
+	{
+		final Player npc = state.npc;
+		for (Skill s : groupHealKit(state))
+		{
+			if (!npc.isSkillDisabled(s) && (npc.getCurrentMp() >= s.getMpConsume()) && PhantomBuffs.canAffordReagent(npc, s))
+			{
+				return s;
+			}
+		}
+		return null;
+	}
+
+	/** How many living party members in support range are hurt below {@code threshold} (drives the group-heal decision). */
+	private int countHurtBelow(Member state, int threshold)
+	{
+		final Player npc = state.npc;
+		final Party party = state.owner.getParty();
+		if (party == null)
+		{
+			return (!state.owner.isDead() && (state.owner.getCurrentHpPercent() < threshold)) ? 1 : 0;
+		}
+		int hurt = 0;
+		for (Player member : party.getMembers())
+		{
+			if (!member.isDead() && (npc.calculateDistance2D(member) <= SUPPORT_RANGE) && (member.getCurrentHpPercent() < threshold))
+			{
+				hurt++;
+			}
+		}
+		return hurt;
+	}
+
 	/**
-	 * The heal to use on {@code target}: the strong (Greater) heal for a real gap or a critically low target, else the
-	 * cheap heal for a small top-off. Saves the expensive heal's MP for when it actually matters.
+	 * The heal to use on {@code target}: a FAST heal for a critically low target (speed saves it), the strong
+	 * MP-efficient heal for a big but non-critical gap (there's time), else the cheap heal for a small top-off.
+	 * Saves the expensive heal's MP for when it actually matters.
 	 */
 	private Skill chooseHeal(Member state, Player target)
 	{
-		if ((target.getCurrentHpPercent() <= CRITICAL_HEAL_PERCENT) || ((100 - target.getCurrentHpPercent()) >= BIG_HEAL_DEFICIT))
+		if (target.getCurrentHpPercent() <= CRITICAL_HEAL_PERCENT)
 		{
-			return heal(state);
+			return emergencyHeal(state); // dying - fast heal, not a slow big one
+		}
+		if ((100 - target.getCurrentHpPercent()) >= BIG_HEAL_DEFICIT)
+		{
+			return strongHeal(state); // big non-critical gap - the MP-smart strong heal
 		}
 		final Skill light = lightHeal(state);
-		return (light != null) ? light : heal(state);
+		return (light != null) ? light : emergencyHeal(state);
 	}
 
 	private Skill res(Member state)
 	{
-		if ((state.res == null) && (state.role == PartyRole.HEALER))
+		// Rez capability is data-driven: any member whose class naturally learned Resurrection (1016) can raise the
+		// fallen - not only the HEALER role. In this datapack that is the Cleric/Oracle line (HEALER) AND the Prophet
+		// line (BUFFER, which inherits Cleric's Resurrection); both run the support tick, so both now rez. A class
+		// that never learned it (a pure mage nuker, an Orc buffer) simply resolves to null and never enters the loop.
+		if (!state.resLookedUp)
 		{
 			state.res = state.npc.getKnownSkill(RES_SKILL_ID);
+			state.resLookedUp = true;
 		}
 		return state.res;
 	}
 
 	private static boolean isHealId(int id)
 	{
-		for (int healId : HEAL_PRIORITY)
+		for (int[] kit : new int[][]
 		{
-			if (healId == id)
+			FAST_HEAL_PRIORITY,
+			STRONG_HEAL_PRIORITY,
+			GROUP_HEAL_PRIORITY,
+			LIGHT_HEAL_PRIORITY
+		})
+		{
+			for (int healId : kit)
 			{
-				return true;
+				if (healId == id)
+				{
+					return true;
+				}
 			}
 		}
 		return false;
