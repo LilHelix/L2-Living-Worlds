@@ -33,10 +33,12 @@ import org.l2jmobius.commons.util.Rnd;
 import org.l2jmobius.gameserver.config.PlayerConfig;
 import org.l2jmobius.gameserver.config.RatesConfig;
 import org.l2jmobius.gameserver.config.custom.ClassBalanceConfig;
+import org.l2jmobius.gameserver.config.custom.FakePlayersConfig;
 import org.l2jmobius.gameserver.config.custom.PremiumSystemConfig;
 import org.l2jmobius.gameserver.managers.DuelManager;
 import org.l2jmobius.gameserver.managers.ItemManager;
 import org.l2jmobius.gameserver.managers.PcCafePointsManager;
+import org.l2jmobius.gameserver.managers.PhantomManager;
 import org.l2jmobius.gameserver.model.actor.Attackable;
 import org.l2jmobius.gameserver.model.actor.Creature;
 import org.l2jmobius.gameserver.model.actor.Player;
@@ -134,6 +136,18 @@ public class Party extends AbstractPlayerGroup
 	}
 	
 	/**
+	 * Whether a party member may take a share of loot / adena. AI members (recruited phantoms and support
+	 * buddies) are excluded by default so drops and adena stay with the real player(s); opt them in with
+	 * FakePlayerPartyLootShare.
+	 * @param member the party member to test
+	 * @return {@code true} if the member is loot-eligible
+	 */
+	private boolean isLootEligible(Player member)
+	{
+		return FakePlayersConfig.FAKE_PLAYER_PARTY_LOOT_SHARE || !PhantomManager.getInstance().isPhantom(member);
+	}
+
+	/**
 	 * Get a random member from this party.
 	 * @param itemId the ID of the item for which the member must have inventory space
 	 * @param target the object of which the member must be within a certain range (must not be null)
@@ -144,7 +158,7 @@ public class Party extends AbstractPlayerGroup
 		final List<Player> availableMembers = new ArrayList<>();
 		for (Player member : _members)
 		{
-			if (member.getInventory().validateCapacityByItemId(itemId) && LocationUtil.checkIfInRange(PlayerConfig.ALT_PARTY_RANGE, target, member, true))
+			if (isLootEligible(member) && member.getInventory().validateCapacityByItemId(itemId) && LocationUtil.checkIfInRange(PlayerConfig.ALT_PARTY_RANGE, target, member, true))
 			{
 				availableMembers.add(member);
 			}
@@ -172,7 +186,7 @@ public class Party extends AbstractPlayerGroup
 			try
 			{
 				member = _members.get(_itemLastLoot);
-				if (member.getInventory().validateCapacityByItemId(itemId) && LocationUtil.checkIfInRange(PlayerConfig.ALT_PARTY_RANGE, target, member, true))
+				if (isLootEligible(member) && member.getInventory().validateCapacityByItemId(itemId) && LocationUtil.checkIfInRange(PlayerConfig.ALT_PARTY_RANGE, target, member, true))
 				{
 					return member;
 				}
@@ -688,7 +702,7 @@ public class Party extends AbstractPlayerGroup
 		// Iterate over all party members to find those within the allowed party range of the target.
 		for (Player member : _members)
 		{
-			if (LocationUtil.checkIfInRange(PlayerConfig.ALT_PARTY_RANGE, target, member, true))
+			if (isLootEligible(member) && LocationUtil.checkIfInRange(PlayerConfig.ALT_PARTY_RANGE, target, member, true))
 			{
 				toReward.add(member); // Add eligible member to the reward list.
 			}
@@ -860,29 +874,33 @@ public class Party extends AbstractPlayerGroup
 	
 	private List<Player> getValidMembers(List<Player> members, int topLvl, Attackable target)
 	{
-		// Phantom party members (buddies / recruited fake players) are clientless and must not take a share of
-		// XP/SP - otherwise they'd both steal a cut and shrink the real player's by inflating the level-sum split.
-		// Exclude them whenever at least one real (client-connected) player remains to be rewarded.
-		boolean hasRealMember = false;
-		for (Player member : members)
+		// Phantom party members (buddies / recruited fake players) are clientless and by default must not take a
+		// share of XP/SP - otherwise they'd both steal a cut and shrink the real player's by inflating the
+		// level-sum split. Exclude them whenever at least one real (client-connected) player remains to be
+		// rewarded. Opt in to a "realistic" split (AI counts toward the XP share) via FakePlayerPartyExpShare.
+		if (!FakePlayersConfig.FAKE_PLAYER_PARTY_EXP_SHARE)
 		{
-			if (member.getClient() != null)
-			{
-				hasRealMember = true;
-				break;
-			}
-		}
-		if (hasRealMember)
-		{
-			final List<Player> realMembers = new ArrayList<>(members.size());
+			boolean hasRealMember = false;
 			for (Player member : members)
 			{
 				if (member.getClient() != null)
 				{
-					realMembers.add(member);
+					hasRealMember = true;
+					break;
 				}
 			}
-			members = realMembers;
+			if (hasRealMember)
+			{
+				final List<Player> realMembers = new ArrayList<>(members.size());
+				for (Player member : members)
+				{
+					if (member.getClient() != null)
+					{
+						realMembers.add(member);
+					}
+				}
+				members = realMembers;
+			}
 		}
 
 		final List<Player> validMembers = new ArrayList<>();

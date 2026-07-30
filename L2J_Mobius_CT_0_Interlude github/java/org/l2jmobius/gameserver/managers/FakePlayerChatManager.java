@@ -31,6 +31,7 @@ import org.l2jmobius.commons.util.Rnd;
 import org.l2jmobius.gameserver.config.custom.FakePlayersConfig;
 import org.l2jmobius.gameserver.managers.PhantomManager.PartyRole;
 import org.l2jmobius.gameserver.managers.PhantomManager.Recruit;
+import org.l2jmobius.gameserver.model.actor.enums.creature.Race;
 import org.l2jmobius.gameserver.model.actor.enums.player.PlayerClass;
 import org.l2jmobius.gameserver.data.SpawnTable;
 import org.l2jmobius.gameserver.data.holders.FakePlayerChatHolder;
@@ -590,7 +591,8 @@ public class FakePlayerChatManager implements IXmlReader
 		// over (works brain-off via keywords; with the brain online a free-form call is classified for its roles).
 		// On a recruit we do NOT also run plain shout banter - the answer IS the bots showing up.
 		final List<String> unresolved = new ArrayList<>();
-		final List<Recruit> roles = parseLfp(text, unresolved);
+		final List<String> impossible = new ArrayList<>();
+		final List<Recruit> roles = parseLfp(text, unresolved, impossible);
 		final int wantedLevel = parseLfpLevel(text); // optional "lvl 57"; 0 = match the recruiter's level
 		if (!roles.isEmpty())
 		{
@@ -598,6 +600,19 @@ public class FakePlayerChatManager implements IXmlReader
 			if (!unresolved.isEmpty())
 			{
 				whisperRecruitClarification(speaker, unresolved); // recruited what we could read; ask about the garbled one(s)
+			}
+			if (!impossible.isEmpty())
+			{
+				whisperImpossibleCombos(speaker, impossible); // ... and call out any race/class combo that can't exist
+			}
+			return;
+		}
+		if (!impossible.isEmpty())
+		{
+			whisperImpossibleCombos(speaker, impossible); // nothing spawnable - tell them the combo doesn't exist
+			if (!unresolved.isEmpty())
+			{
+				whisperRecruitClarification(speaker, unresolved);
 			}
 			return;
 		}
@@ -660,7 +675,9 @@ public class FakePlayerChatManager implements IXmlReader
 	{
 		for (PlayerClass pc : PlayerClass.values())
 		{
-			if (PhantomManager.isSelectableClass(pc)) // 2nd+ occupations only; base/1st fall through to role tokens
+			// 2nd+ occupations plus the distinctive multi-word 1st classes (Palus Knight, Elven Knight, ...); generic
+			// single-word 1st/base names stay race-flexible role tokens. Every match is level-adjusted at spawn time.
+			if (PhantomManager.isRequestableByName(pc))
 			{
 				CLASS_BY_NAME.put(pc.name().toLowerCase().replace('_', ' '), pc);
 			}
@@ -726,7 +743,7 @@ public class FakePlayerChatManager implements IXmlReader
 	 * elder") become that exact class; generic role words ("2 dd + healer") become level-appropriate roles.
 	 * Numbers before a class/role repeat it. Empty when the line is not an explicit party call.
 	 */
-	private static List<Recruit> parseLfp(String text, List<String> unresolvedOut)
+	private static List<Recruit> parseLfp(String text, List<String> unresolvedOut, List<String> impossibleOut)
 	{
 		final List<Recruit> recruits = new ArrayList<>();
 		if (!looksLikeLfp(text))
@@ -764,9 +781,47 @@ public class FakePlayerChatManager implements IXmlReader
 			final Recruit resolved = resolveRecruitToken(request.token);
 			if (resolved != null)
 			{
+				// A race adjective ("elf archer") re-homes a GENERIC role recruit to that race; a specifically named
+				// class (classId > 0) already carries its own race, so the adjective is ignored for it.
+				final Race race = (resolved.classId == 0) ? raceFromToken(request.race) : null;
+				// A generic "dd"/"dps" is re-rolled FRESH per slot, so a bulk request ("5 dd") fills with a varied mix
+				// of races and archetypes instead of N identical clones (Trello #11). A specifically named class or an
+				// exact role word keeps its identity across the count ("5 gladiators" stays five gladiators).
+				if (isGenericDd(request.token))
+				{
+					// An explicit race with no damage archetype at all (can't happen for a real race) is called out.
+					if ((race != null) && (PhantomManager.randomDpsForRace(race) == null))
+					{
+						if (impossibleOut != null)
+						{
+							impossibleOut.add(comboLabel(request.race, resolved.role));
+						}
+						continue;
+					}
+					for (int i = 0; (i < request.count) && (recruits.size() < 8); i++)
+					{
+						final Recruit dd = PhantomManager.rollDpsRecruit(race);
+						if (dd != null)
+						{
+							recruits.add(dd);
+						}
+					}
+					continue;
+				}
+				final PartyRole role = resolved.role;
+				if ((race != null) && !PhantomManager.comboExists(race, role))
+				{
+					// A specific impossible archetype (e.g. "orc archer") is called out, not spawned in the wrong race.
+					if (impossibleOut != null)
+					{
+						impossibleOut.add(comboLabel(request.race, role));
+					}
+					continue;
+				}
+				final Recruit toAdd = (race != null) ? new Recruit(role, 0, race) : resolved;
 				for (int i = 0; (i < request.count) && (recruits.size() < 8); i++)
 				{
-					recruits.add(resolved);
+					recruits.add(toAdd);
 				}
 			}
 			else if ((unresolvedOut != null) && looksLikeGarbledClass(request.token))
@@ -776,6 +831,61 @@ public class FakePlayerChatManager implements IXmlReader
 			// else: an ordinary non-role word ("cruma", "pls", "for") - ignore silently as before
 		}
 		return recruits;
+	}
+
+	/** Maps a parsed race adjective ("elf", "de", "dark_elf", ...) to the game Race, or {@code null} if unrecognised. */
+	private static Race raceFromToken(String token)
+	{
+		if (token == null)
+		{
+			return null;
+		}
+		switch (token)
+		{
+			case "human":
+			{
+				return Race.HUMAN;
+			}
+			case "elf":
+			case "elven":
+			{
+				return Race.ELF;
+			}
+			case "de":
+			case "delf":
+			case "darkelf":
+			case "dark_elf":
+			{
+				return Race.DARK_ELF;
+			}
+			case "orc":
+			case "orcish":
+			{
+				return Race.ORC;
+			}
+			case "dwarf":
+			case "dwarven":
+			{
+				return Race.DWARF;
+			}
+			default:
+			{
+				return null;
+			}
+		}
+	}
+
+	/** A readable "&lt;race&gt; &lt;role&gt;" label for an impossible combo, used in the clarification shout. */
+	private static String comboLabel(String raceToken, PartyRole role)
+	{
+		final String race = "dark_elf".equals(raceToken) ? "dark elf" : (raceToken == null ? "" : raceToken);
+		return (race + " " + role.name().toLowerCase()).trim();
+	}
+
+	/** @return {@code true} if a token is a generic "any damage dealer" word (whose archetype can be re-rolled for a race). */
+	private static boolean isGenericDd(String token)
+	{
+		return "dd".equals(token) || "dps".equals(token) || "damage".equals(token) || "dealer".equals(token);
 	}
 
 	/**
@@ -891,6 +1001,51 @@ public class FakePlayerChatManager implements IXmlReader
 		if (voice != null)
 		{
 			sendChat(speaker, voice.getName(), line); // reuses the length-scaled "typing" whisper path
+		}
+		else
+		{
+			speaker.sendPacket(new CreatureSay(speaker, ChatType.WHISPER, "Party", line));
+		}
+	}
+
+	/**
+	 * Tells the recruiter, in a nearby fake player's voice, that a requested race/class combo can't exist (an Orc
+	 * archer, an Elf buffer, a Dwarf mage), so nothing is silently spawned in the wrong race. Rate-limited like the
+	 * other public bot chatter; falls back to a plain "Party" system whisper if no fake player is around to say it.
+	 */
+	private void whisperImpossibleCombos(Player speaker, List<String> combos)
+	{
+		if ((speaker == null) || (combos == null) || combos.isEmpty() || (MESSAGES_THIS_MINUTE.get() >= MAX_MESSAGES_PER_MINUTE))
+		{
+			return;
+		}
+		final List<String> shown = new ArrayList<>();
+		for (String combo : combos)
+		{
+			if (!shown.contains(combo))
+			{
+				shown.add(combo);
+			}
+			if (shown.size() >= 3)
+			{
+				break;
+			}
+		}
+		final StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < shown.size(); i++)
+		{
+			if (i > 0)
+			{
+				sb.append((i == (shown.size() - 1)) ? " or a " : ", a ");
+			}
+			sb.append(shown.get(i));
+		}
+		final String line = "there's no such thing as a " + sb + " m8, doesn't exist in this game";
+		final Npc voice = pickShoutResponder(speaker);
+		MESSAGES_THIS_MINUTE.incrementAndGet();
+		if (voice != null)
+		{
+			sendChat(speaker, voice.getName(), line);
 		}
 		else
 		{

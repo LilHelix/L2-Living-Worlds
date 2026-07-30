@@ -48,6 +48,11 @@ public class FakePlayersConfig
 	public static boolean FAKE_PLAYER_CAN_PICKUP;
 	public static boolean FAKE_PLAYER_PARTY_QUEST_CREDIT;
 	public static int FAKE_PLAYER_PARTY_QUEST_CREDIT_RANGE;
+	public static boolean FAKE_PLAYER_PARTY_EXP_SHARE;
+	public static boolean FAKE_PLAYER_PARTY_LOOT_SHARE;
+	public static int FAKE_PLAYER_RECRUIT_ENCHANT_CHANCE;
+	public static int FAKE_PLAYER_RECRUIT_ENCHANT_MIN;
+	public static int FAKE_PLAYER_RECRUIT_ENCHANT_MAX;
 
 	public static void load()
 	{
@@ -68,5 +73,10 @@ public class FakePlayersConfig
 		FAKE_PLAYER_CAN_PICKUP = config.getBoolean("FakePlayerCanPickup", false);
 		FAKE_PLAYER_PARTY_QUEST_CREDIT = config.getBoolean("FakePlayerPartyQuestCredit", true);
 		FAKE_PLAYER_PARTY_QUEST_CREDIT_RANGE = config.getInt("FakePlayerPartyQuestCreditRange", 1500);
+		FAKE_PLAYER_PARTY_EXP_SHARE = config.getBoolean("FakePlayerPartyExpShare", false);
+		FAKE_PLAYER_PARTY_LOOT_SHARE = config.getBoolean("FakePlayerPartyLootShare", false);
+		FAKE_PLAYER_RECRUIT_ENCHANT_CHANCE = config.getInt("FakePlayerRecruitEnchantChance", 65);
+		FAKE_PLAYER_RECRUIT_ENCHANT_MIN = config.getInt("FakePlayerRecruitEnchantMin", 3);
+		FAKE_PLAYER_RECRUIT_ENCHANT_MAX = config.getInt("FakePlayerRecruitEnchantMax", 6);
 	}
 }

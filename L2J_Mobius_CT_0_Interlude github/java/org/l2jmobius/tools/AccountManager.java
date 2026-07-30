@@ -160,7 +160,7 @@ public class AccountManager extends JFrame
 		// Show Splash Screen for 3 seconds.
 		new SplashScreen(".." + File.separator + "images" + File.separator + "splash.png", 3000, this);
 		
-		setTitle("Mobius - Account Manager");
+		setTitle("Living Worlds - Account Manager");
 		setMinimumSize(new Dimension(600, 400));
 		setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
 		setLocationRelativeTo(null);

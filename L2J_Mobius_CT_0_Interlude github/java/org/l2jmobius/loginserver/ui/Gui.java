@@ -237,7 +237,7 @@ public class Gui
 		scrollPanel.setBounds(0, 0, 800, 550);
 		
 		// Set frame.
-		final JFrame frame = new JFrame("Mobius - LoginServer");
+		final JFrame frame = new JFrame("Living Worlds - LoginServer");
 		frame.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
 		frame.addWindowListener(new WindowAdapter()
 		{
