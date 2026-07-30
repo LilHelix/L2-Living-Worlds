@@ -9,6 +9,5 @@ CREATE TABLE IF NOT EXISTS `announcements` (
   PRIMARY KEY (`id`)
 ) DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
-INSERT INTO announcements (`type`, `author`, `content`) VALUES 
-(0, 'L2jMobius', 'Thanks for using L2jMobius!'),
-(0, 'L2jMobius', 'http://www.l2jmobius.org');
+INSERT INTO announcements (`type`, `author`, `content`) VALUES
+(0, 'Living Worlds', 'Welcome to Living Worlds!');

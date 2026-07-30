@@ -409,4 +409,41 @@ public final class PhantomBuffs
 	{
 		return Math.max(2500, buff.getHitTime() + 1200);
 	}
+
+	// ===== Cross-caster resurrection claims =====
+	// The same coordination problem as buffs, for Resurrection. A party can hold several rezzers at once - the
+	// recruited-party healers/buffers (PhantomPartyManager) AND the personal support buddy (PhantomBuddyManager) -
+	// and a res cast is not instant, so without coordination they would all fire on the same corpse (the tester's
+	// "everyone spam-rezzes together"). A rezzer claims a corpse just before casting; anyone else that finds it
+	// claimed by a DIFFERENT rezzer spreads onto another corpse (or waits a tick). Claims carry an expiry, and once
+	// a cast lands the corpse's own isReviveRequested() flag becomes the universal skip, so nothing needs releasing.
+	// A dedicated registry (not the buff one) keeps res claims cleanly separate from buff reservations.
+	private static final PhantomBuffReservations RES_CLAIMS = new PhantomBuffReservations();
+	private static final int RESURRECTION_ID = 1016;
+
+	/**
+	 * Read-only: is {@code corpse} already claimed for a res by a rezzer other than {@code askerObjectId}? Lets a
+	 * rezzer pick a different corpse in the same tick instead of piling onto one another is already raising.
+	 * @param corpseObjectId the fallen member's object id
+	 * @param askerObjectId the rezzer asking (its own live claim does not count)
+	 * @param now the current time in millis
+	 * @return {@code true} if a different rezzer is already claiming this corpse
+	 */
+	public static boolean isResClaimed(int corpseObjectId, int askerObjectId, long now)
+	{
+		return RES_CLAIMS.isHeldByOther(PhantomBuffReservations.key(corpseObjectId, RESURRECTION_ID), now, askerObjectId);
+	}
+
+	/**
+	 * Attempts to claim {@code corpse} for a res cast so no other bot double-casts Resurrection on it. Call this
+	 * immediately before {@code doCast}, once every other gate (range / MP / stand-up) has passed.
+	 * @param corpseObjectId the fallen member's object id
+	 * @param casterObjectId the casting rezzer's object id (a rezzer never blocks its own re-claim)
+	 * @param holdMillis how long the claim is held (long enough for the cast/revive-request to land)
+	 * @return {@code true} if this rezzer may cast now; {@code false} if a different bot is already raising this corpse
+	 */
+	public static boolean claimRes(int corpseObjectId, int casterObjectId, int holdMillis)
+	{
+		return RES_CLAIMS.reserve(PhantomBuffReservations.key(corpseObjectId, RESURRECTION_ID), System.currentTimeMillis(), casterObjectId, holdMillis);
+	}
 }

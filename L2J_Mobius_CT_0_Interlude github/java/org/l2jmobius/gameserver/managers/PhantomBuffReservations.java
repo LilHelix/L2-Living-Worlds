@@ -93,6 +93,22 @@ public final class PhantomBuffReservations
 		return granted[0];
 	}
 
+	/**
+	 * Read-only peek: is the slot currently held by a caster <i>other</i> than {@code askerId}? Unlike
+	 * {@link #reserve}, this takes no claim - it lets a caster see a slot is already spoken for (e.g. a rezzer
+	 * checking whether another rezzer is already on a corpse) and pick a different target, deferring the actual
+	 * atomic claim to {@code reserve} once every other gate has passed.
+	 * @param key the {@link #key(int, int)} of the slot
+	 * @param nowMillis the current time
+	 * @param askerId the caster asking (its own live claim does not count as held by another)
+	 * @return {@code true} if a different caster holds an unexpired claim on the slot
+	 */
+	public boolean isHeldByOther(long key, long nowMillis, int askerId)
+	{
+		final long[] cur = _reservations.get(key);
+		return (cur != null) && (cur[0] > nowMillis) && (cur[1] != askerId);
+	}
+
 	/** @return the number of live entries (test/diagnostic use). */
 	public int size()
 	{

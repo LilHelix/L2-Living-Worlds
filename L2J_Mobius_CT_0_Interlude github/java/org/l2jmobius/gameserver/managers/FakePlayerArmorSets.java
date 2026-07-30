@@ -145,36 +145,36 @@ public class FakePlayerArmorSets
 	}
 
 	/**
-	 * A random matching outfit for the armor {@code family} at {@code grade}: prefers the requested grade, then
-	 * steps down, then up, so a family with no set at the exact grade (e.g. no No-Grade heavy set) still yields a
-	 * complete outfit rather than a bare bot.
-	 * @return an {@link Outfit}, or {@code null} if the family has no usable set at all
+	 * A random matching outfit for the armor {@code family} at {@code grade}, staying in that family and stepping
+	 * <b>down</b> only (never up, so a level-10 heavy role never lands a D-grade set). Returns {@code null} when the
+	 * family has no set at or below the grade - notably no-grade heavy, which has no set at all: the caller then
+	 * assembles the outfit from individual family pieces (Bronze Breastplate/Gaiters + Bone Shield) so a low-level
+	 * heavy role still looks heavy instead of borrowing a leather set.
+	 * @return an {@link Outfit}, or {@code null} if the family has no set at or below {@code grade}
 	 */
 	public static Outfit random(ArmorType family, CrystalType grade)
 	{
 		build();
+		final CrystalType[] grades = CrystalType.values();
+		for (int ord = grade.ordinal(); ord >= 0; ord--)
+		{
+			final Outfit outfit = randomFrom(family, grades[ord]);
+			if (outfit != null)
+			{
+				return outfit;
+			}
+		}
+		return null;
+	}
+
+	private static Outfit randomFrom(ArmorType family, CrystalType grade)
+	{
 		final EnumMap<CrystalType, List<Outfit>> byGrade = SETS.get(family);
 		if (byGrade == null)
 		{
 			return null;
 		}
-		final CrystalType[] grades = CrystalType.values();
-		for (int ord = grade.ordinal(); ord >= 0; ord--)
-		{
-			final List<Outfit> list = byGrade.get(grades[ord]);
-			if (!list.isEmpty())
-			{
-				return list.get(Rnd.get(list.size()));
-			}
-		}
-		for (int ord = grade.ordinal() + 1; ord < grades.length; ord++)
-		{
-			final List<Outfit> list = byGrade.get(grades[ord]);
-			if (!list.isEmpty())
-			{
-				return list.get(Rnd.get(list.size()));
-			}
-		}
-		return null;
+		final List<Outfit> list = byGrade.get(grade);
+		return ((list == null) || list.isEmpty()) ? null : list.get(Rnd.get(list.size()));
 	}
 }

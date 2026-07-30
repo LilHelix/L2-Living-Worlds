@@ -175,7 +175,7 @@ public class GameServer
 	
 	public GameServer() throws Exception
 	{
-		System.out.println("=== MY BUILD WORKS ===");
+		System.out.println("=== Living Worlds Server ===");
 		
 		// GUI
 		InterfaceConfig.load();
@@ -198,7 +198,7 @@ public class GameServer
 		// Initialize config
 		ConfigLoader.init();
 		
-		LOGGER.info("=== MY BUILD WORKS ===");
+		LOGGER.info("=== Living Worlds Server ===");
 		
 		printSection("Database");
 		DatabaseFactory.init();

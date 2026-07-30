@@ -210,6 +210,14 @@ if (Test-Path $editorSrc) {
     Ok "FPC editor bundled (open tools\fpc-editor\index.html in a browser)"
 }
 
+# ---- 6d. bundle the config control panel (visual .ini editor) into pack\tools -----
+$adminSrc = Join-Path $ProjectRoot 'tools\l2admin'
+if (Test-Path $adminSrc) {
+    Info "bundling the config control panel into pack\tools\l2admin ..."
+    Copy-Tree $adminSrc (Join-Path $Pack 'tools\l2admin')
+    Ok "config control panel bundled (open tools\l2admin\index.html in a browser)"
+}
+
 # ---- 7. zip it -------------------------------------------------------------
 $outZip = Join-Path $OutDir 'L2J-Offline-OneClick.zip'
 if (Test-Path $outZip) { Remove-Item $outZip -Force }

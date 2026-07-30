@@ -161,16 +161,31 @@ public final class FakePlayerChatParsing
 		return 1;
 	}
 
-	/** A "N x &lt;token&gt;" recruit request parsed from a party call, before the token is resolved to a role/class. */
+	// Race adjectives a recruiter can put in front of a role ("elf archer", "dark elf tank"). Kept as bare strings
+	// here (this class stays game-type-free); the manager maps them to the game's Race enum. "dark" is handled
+	// specially in the loop so the two-word "dark elf" resolves to DARK_ELF rather than being read as plain Elf.
+	private static final java.util.Set<String> RACE_TOKENS = java.util.Set.of("human", "elf", "elven", "orc", "orcish", "dwarf", "dwarven", "de", "delf", "darkelf");
+
+	/**
+	 * A "N x &lt;token&gt;" recruit request parsed from a party call, before the token is resolved to a role/class,
+	 * plus an optional race adjective that preceded it ({@code null} = none; "dark_elf" for a two-word "dark elf").
+	 */
 	public static final class RoleRequest
 	{
 		public final String token;
 		public final int count;
+		public final String race;
 
 		public RoleRequest(String token, int count)
 		{
+			this(token, count, null);
+		}
+
+		public RoleRequest(String token, int count, String race)
+		{
 			this.token = token;
 			this.count = count;
+			this.race = race;
 		}
 	}
 
@@ -192,7 +207,9 @@ public final class FakePlayerChatParsing
 		}
 
 		int pendingCount = 1;
+		String pendingRace = null; // a race adjective attaches to the next role/class word ("elf" -> "elf archer")
 		boolean levelToken = false; // the number right after "lvl"/"level"/"lv" is a level, not a count
+		boolean sawDark = false; // "dark" seen; if "elf"/"elven" follows it is a DARK_ELF, else "dark" is ignored
 		for (String token : remainingText.toLowerCase().split("[^a-z0-9]+"))
 		{
 			if (token.isEmpty())
@@ -215,8 +232,21 @@ public final class FakePlayerChatParsing
 				continue;
 			}
 			levelToken = false;
-			requests.add(new RoleRequest(token, pendingCount));
-			pendingCount = 1; // a number only applies to the class/role word right after it
+			if (token.equals("dark"))
+			{
+				sawDark = true; // wait to see if "elf" follows
+				continue;
+			}
+			if (RACE_TOKENS.contains(token))
+			{
+				pendingRace = (sawDark && (token.equals("elf") || token.equals("elven"))) ? "dark_elf" : token;
+				sawDark = false;
+				continue; // a race word is a modifier, not a recruit on its own
+			}
+			sawDark = false;
+			requests.add(new RoleRequest(token, pendingCount, pendingRace));
+			pendingCount = 1; // a number/race only applies to the class/role word right after it
+			pendingRace = null;
 		}
 		return requests;
 	}

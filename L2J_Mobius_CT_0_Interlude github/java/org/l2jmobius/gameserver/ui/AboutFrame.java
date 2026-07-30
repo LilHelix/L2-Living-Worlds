@@ -42,7 +42,7 @@ import org.l2jmobius.gameserver.config.ServerConfig;
  */
 public class AboutFrame
 {
-	private static final String URL = "www.l2jmobius.org";
+	private static final String URL = "github.com/Teravibes/L2-Living-Worlds";
 	
 	private final URI _uri;
 	private JFrame _frmAbout;
@@ -64,7 +64,7 @@ public class AboutFrame
 		_frmAbout.setType(Type.UTILITY);
 		_frmAbout.getContentPane().setLayout(null);
 		
-		final JLabel lblLjmobius = new JLabel("L2jMobius");
+		final JLabel lblLjmobius = new JLabel("Living Worlds");
 		lblLjmobius.setFont(new Font("Tahoma", Font.PLAIN, 32));
 		lblLjmobius.setHorizontalAlignment(SwingConstants.CENTER);
 		lblLjmobius.setBounds(10, 11, 271, 39);

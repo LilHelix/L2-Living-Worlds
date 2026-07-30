@@ -60,6 +60,17 @@ public class FakePlayerGearFilter
 		9956, 9959, 9960, 9961, 9962, 9963, 9964, 9965, 9980, 9997, 9998
 	};
 
+	// Gap-fillers: the GM gear lists have NO no-grade heavy armor and NO no-grade shield, so a low-level heavy
+	// role had nothing heavy to wear (it fell back to leather). These are the standard no-grade heavy pieces
+	// (Bronze set + Bone Shield) - render-safe player gear - added so a no-grade tank/warrior looks heavy.
+	private static final int[] EXTRA_ALLOWED =
+	{
+		26, // Bronze Breastplate (heavy chest)
+		34, // Bronze Gaiters (heavy legs)
+		46, // Bronze Helmet
+		625 // Bone Shield
+	};
+
 	private static volatile Set<Integer> _allowed = null;
 
 	private FakePlayerGearFilter()
@@ -100,6 +111,10 @@ public class FakePlayerGearFilter
 			if (built.isEmpty()) // BuyListData not ready yet - don't cache an empty allow-list, retry next call
 			{
 				return built;
+			}
+			for (int id : EXTRA_ALLOWED) // fill the no-grade heavy / shield gap the GM lists leave
+			{
+				built.add(id);
 			}
 			_allowed = built;
 			return built;
