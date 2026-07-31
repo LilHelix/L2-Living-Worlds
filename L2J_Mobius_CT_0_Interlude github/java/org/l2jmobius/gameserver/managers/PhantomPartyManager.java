@@ -54,6 +54,7 @@ import org.l2jmobius.gameserver.model.groups.Party;
 import org.l2jmobius.gameserver.model.groups.PartyDistributionType;
 import org.l2jmobius.gameserver.model.groups.PartyMessageType;
 import org.l2jmobius.gameserver.model.item.Weapon;
+import org.l2jmobius.gameserver.model.item.instance.Item;
 import org.l2jmobius.gameserver.model.item.type.WeaponType;
 import org.l2jmobius.gameserver.model.effects.EffectType;
 import org.l2jmobius.gameserver.model.skill.AbnormalType;
@@ -354,6 +355,7 @@ public class PhantomPartyManager
 		boolean songsLookedUp;
 		boolean songsRequested; // explicit "sing"/"dance" order: run the rotation now even out of combat
 		SpoilBehavior spoilBehavior;
+		List<Item> spoilSessionItems;
 		Skill survival; // lazy (TANK): Ultimate Defense, hand-cast at low HP (parked out of the auto-buff loop)
 		boolean survivalLookedUp;
 		Skill cc; // lazy (NUKER): Sleep / Dryad Root for a loose add
@@ -1987,7 +1989,7 @@ public class PhantomPartyManager
 		{
 			return true;
 		}
-		if ((state.role == PartyRole.BOUNTY_HUNTER) && trySpoilTarget(state, focus))
+		if ((state.role == PartyRole.BOUNTY_HUNTER) && maintainSpoil(state, focus))
 		{
 			return true;
 		}
@@ -3074,15 +3076,20 @@ public class PhantomPartyManager
 		return true;
 	}
 
-	private boolean trySpoilTarget(Member state, Monster target)
+	private boolean maintainSpoil(Member state, Monster target)
 	{
 		Player player = state.npc;
-		Skill spoilSkill = player.getKnownSkill(254);
 		if (!target.isSpoiled() && !target.isCastingNow()) {
+			Skill spoilSkill = player.getKnownSkill(254);
 			player.doCast(spoilSkill, target, new ArrayList<>());
 			return true;
 		}
-		return true;
+		if (target.isSpoiled() && target.isDead()) {
+			Skill sweeperSkill = player.getKnownSkill(42);
+			player.doCast(sweeperSkill, target, new ArrayList<>());
+			return true;
+		}
+		return false;
 	}
 
 	/**
