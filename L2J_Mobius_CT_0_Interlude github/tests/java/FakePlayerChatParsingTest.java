@@ -56,6 +56,7 @@ public class FakePlayerChatParsingTest
 		testShopTagPattern();
 		testCountBefore();
 		testParseRoleRequests();
+		testFuzzyMatching();
 
 		System.out.println();
 		System.out.println("Ran " + checks + " checks, " + failures + " failure(s).");
@@ -176,9 +177,51 @@ public class FakePlayerChatParsingTest
 		// Plurals are emitted verbatim (caller resolves the singular).
 		req(FakePlayerChatParsing.parseRoleRequests("3 mages").get(0), "mages", 3, "plural token kept verbatim");
 
+		// A race adjective attaches to the NEXT role/class word and is not itself a request.
+		r = FakePlayerChatParsing.parseRoleRequests("elf archer");
+		eq(1, r.size(), "'elf archer' -> one request (race is a modifier, not a recruit)");
+		reqRace(r.get(0), "archer", 1, "elf", "elf archer");
+		// Two-word "dark elf" resolves to dark_elf, not plain elf.
+		reqRace(FakePlayerChatParsing.parseRoleRequests("dark elf tank").get(0), "tank", 1, "dark_elf", "dark elf tank");
+		// Count + race both apply to the following word.
+		reqRace(FakePlayerChatParsing.parseRoleRequests("2 orc buffer").get(0), "buffer", 2, "orc", "2 orc buffer");
+		// A short race alias works too.
+		reqRace(FakePlayerChatParsing.parseRoleRequests("de nuker lvl 40").get(0), "nuker", 1, "de", "de nuker");
+		// A race word with no following role is dropped (no phantom spawns from a bare race).
+		eq(0, FakePlayerChatParsing.parseRoleRequests("elf").size(), "bare race word -> no request");
+		// Race must PRECEDE the role; a trailing race does not attach.
+		req(FakePlayerChatParsing.parseRoleRequests("healer elf").get(0), "healer", 1, "trailing race does not attach");
+		eq(1, FakePlayerChatParsing.parseRoleRequests("healer elf").size(), "'healer elf' -> one request only");
+
 		// Empty / null inputs are safe.
 		eq(0, FakePlayerChatParsing.parseRoleRequests("").size(), "empty text -> no requests");
 		eq(0, FakePlayerChatParsing.parseRoleRequests(null).size(), "null text -> no requests");
+	}
+
+	private static void testFuzzyMatching()
+	{
+		// Edit distance: identical, empty, and single insert/delete/substitute = 1.
+		eq(0, FakePlayerChatParsing.editDistance("prophet", "prophet"), "identical -> 0");
+		eq(7, FakePlayerChatParsing.editDistance("", "prophet"), "empty vs word -> length");
+		eq(1, FakePlayerChatParsing.editDistance("warcyer", "warcryer"), "missing letter -> 1");
+		eq(1, FakePlayerChatParsing.editDistance("prophrt", "prophet"), "one substitution -> 1");
+		// Adjacent transposition costs 1 (Damerau), so "bishpo" is one typo from "bishop".
+		eq(1, FakePlayerChatParsing.editDistance("bishpo", "bishop"), "adjacent transposition -> 1");
+
+		// Length-scaled budget: short aliases are exact-only, longer names forgive one/two typos.
+		eq(0, FakePlayerChatParsing.fuzzyBudget(2), "2-letter alias -> exact only");
+		eq(1, FakePlayerChatParsing.fuzzyBudget(6), "6-letter word -> one typo");
+		eq(2, FakePlayerChatParsing.fuzzyBudget(9), "long name -> two typos");
+
+		// nearestWithin returns the lone closest inside budget; a tie returns null so the caller asks, not guesses.
+		final List<String> cands = List.of("warcryer", "prophet", "bishop", "healer", "dancer");
+		eq("warcryer", FakePlayerChatParsing.nearestWithin("warcyer", cands, 1), "typo resolves to nearest");
+		eq(null, FakePlayerChatParsing.nearestWithin("zzzzzz", cands, 1), "nothing within budget -> null");
+		truth(FakePlayerChatParsing.nearestWithin("xealer", List.of("healer", "dealer"), 1) == null, "ambiguous tie -> null");
+
+		// minDistance is the closest of the whole set.
+		eq(1, FakePlayerChatParsing.minDistance("warcyer", cands), "minDistance finds the 1-off candidate");
+		eq(Integer.MAX_VALUE, FakePlayerChatParsing.minDistance("dd", java.util.List.of()), "empty candidates -> MAX_VALUE");
 	}
 
 	// ===== tiny assertion helpers =====
@@ -192,6 +235,13 @@ public class FakePlayerChatParsingTest
 	{
 		eq(token, actual.token, what + " (token)");
 		eq(count, actual.count, what + " (count)");
+	}
+
+	private static void reqRace(RoleRequest actual, String token, int count, String race, String what)
+	{
+		eq(token, actual.token, what + " (token)");
+		eq(count, actual.count, what + " (count)");
+		eq(race, actual.race, what + " (race)");
 	}
 
 	private static void eq(Object expected, Object actual, String what)

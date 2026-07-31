@@ -114,7 +114,7 @@ public class GameServerRegister extends JFrame
 		// Show Splash Screen for 3 seconds.
 		new SplashScreen(".." + File.separator + "images" + File.separator + "splash.png", 3000, this);
 		
-		setTitle("Mobius - Game Server Register");
+		setTitle("Living Worlds - Game Server Register");
 		setMinimumSize(new Dimension(500, 300));
 		setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
 		setLocationRelativeTo(null);

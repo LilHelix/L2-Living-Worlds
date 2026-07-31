@@ -40,6 +40,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Predicate;
 import java.util.logging.Logger;
 
+import org.l2jmobius.gameserver.config.custom.FakePlayersConfig;
 import org.w3c.dom.Document;
 
 import org.l2jmobius.commons.database.DatabaseFactory;
@@ -68,6 +69,7 @@ import org.l2jmobius.gameserver.model.actor.holders.player.AutoUseSettingsHolder
 import org.l2jmobius.gameserver.model.actor.holders.player.ClassType;
 import org.l2jmobius.gameserver.model.actor.instance.Monster;
 import org.l2jmobius.gameserver.model.actor.templates.PlayerTemplate;
+import org.l2jmobius.gameserver.model.effects.EffectType;
 import org.l2jmobius.gameserver.model.item.Armor;
 import org.l2jmobius.gameserver.model.item.EtcItem;
 import org.l2jmobius.gameserver.model.item.ItemTemplate;
@@ -143,9 +145,7 @@ public class PhantomManager implements IXmlReader
 	private static final int ARROW_COUNT = 20000;
 	// Recruited party members gear up for real content (unlike the cheap, intentionally-patchy ambient loadout):
 	// a chance the member is an enchanted player, and if so a modest uniform enchant on its weapon + armor.
-	private static final int PARTY_ENCHANT_CHANCE = 65; // percent of recruited members that come enchanted
-	private static final int PARTY_ENCHANT_MIN = 3;
-	private static final int PARTY_ENCHANT_MAX = 6;
+	// The chance and +min..+max range are configurable via FakePlayerRecruitEnchant* in FakePlayers.ini.
 	// Healing potions for in-combat HP sustain while farming. Generous stack since phantoms fight a lot;
 	// refreshed on every (re)spawn. Native auto-potion drinks one when HP falls below the percent.
 	private static final int HP_POTION_ID = 1539; // Greater Healing Potion
@@ -257,12 +257,13 @@ public class PhantomManager implements IXmlReader
 	// loadouts: fighters (sword + light/heavy armor) and mages (magic weapon + robe).
 	private static final Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> FIGHTER_GEAR = new EnumMap<>(BodyPart.class);
 	private static final Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> MAGE_GEAR = new EnumMap<>(BodyPart.class);
-	// Caster armor item ids that have NO Orc-Mystic model in the client and so render invisibly on an Orc
-	// (Warcryer) - chest/legs vanish. There is no server-side attribute to detect this (identical items render
-	// differently), so it is a tested deny-list: an Orc caster is geared from everything EXCEPT these. Add ids
-	// here as the debug gear log turns up more offenders. Confirmed so far: 445 Paradia Tunic (chest),
-	// 474 Stockings of Mana (legs).
-	private static final Set<Integer> ORC_CASTER_ARMOR_SKIP = Set.of(445, 474);
+	// DISABLED (kept for reference). Caster armor item ids that have NO Orc-Mystic model in the client and so
+	// render invisibly on an Orc (Warcryer) - chest/legs vanish. There is no server-side attribute to detect this
+	// (identical items render differently), so it was a tested deny-list: an Orc caster was geared from everything
+	// EXCEPT these (445 Paradia Tunic chest, 474 Stockings of Mana legs). Turned OFF for now so orc casters draw
+	// ordinary robe and we can re-check whether the invisible-torso bug still reproduces on the live client. If it
+	// does, re-enable this and pass it as the `skip` set in gear()/gearParty() again.
+	// private static final Set<Integer> ORC_CASTER_ARMOR_SKIP = Set.of(445, 474);
 	private static volatile boolean _gearBuilt = false;
 
 	/**
@@ -341,24 +342,30 @@ public class PhantomManager implements IXmlReader
 	 */
 	public enum PartyRole
 	{
-		TANK(false, BuddyRole.NONE),
-		WARRIOR(false, BuddyRole.NONE),
-		ARCHER(false, BuddyRole.NONE),
-		DAGGER(false, BuddyRole.NONE),
-		SINGER(false, BuddyRole.NONE), // Swordsinger: melee that keeps the party's songs running (2-min recast loop)
-		DANCER(false, BuddyRole.NONE), // Bladedancer: dual-wield melee that keeps the dances running
-		NUKER(true, BuddyRole.NONE),
-		HEALER(true, BuddyRole.ELDER), // Elven Elder kit (heals + recharge); granted Resurrection on spawn
-		BUFFER(true, BuddyRole.PROPHET), // Prophet fighter-buff kit
-		BOUNTY_HUNTER(false, BuddyRole.BOUNTY_HUNTER); // Bounty Hunter: spoils stuff, shares loot
+		// The armor field is the class's practical armor family (from its datapack armor-mastery skill, cross-checked
+		// against community Interlude builds): Heavy for tanks/warriors/singer/dancer, Light for archers/daggers,
+		// MAGIC (=robe) for casters. It drives gearParty's armor pick so an archer no longer rolls heavy plate, etc.
+		TANK(false, BuddyRole.NONE, ArmorType.HEAVY),
+		WARRIOR(false, BuddyRole.NONE, ArmorType.HEAVY),
+		ARCHER(false, BuddyRole.NONE, ArmorType.LIGHT),
+		DAGGER(false, BuddyRole.NONE, ArmorType.LIGHT),
+		MONK(false, BuddyRole.NONE, ArmorType.LIGHT), // Orc Monk / Tyrant / Grand Khavatari: unarmed (fist) light-armor melee bruiser
+		SINGER(false, BuddyRole.NONE, ArmorType.HEAVY), // Swordsinger: melee that keeps the party's songs running (2-min recast loop)
+		DANCER(false, BuddyRole.NONE, ArmorType.HEAVY), // Bladedancer: dual-wield melee that keeps the dances running (Heavy + dual swords is the retail standard)
+		NUKER(true, BuddyRole.NONE, ArmorType.MAGIC),
+		HEALER(true, BuddyRole.ELDER, ArmorType.MAGIC), // Elven Elder kit (heals + recharge + Resurrection, learned naturally from its class tree)
+		BUFFER(true,  ddyRole.PROPHET, ArmorType.MAGIC), // Prophet fighter-buff kit
+        BOUNTY_HUNTER(false, BuddyRole.BOUNTY_HUNTER, ArmorType.HEAVY); // Bounty Hunter: spoils stuff, shares loot
 
-		final boolean mage;
+        final boolean mage;
 		final BuddyRole supportAs;
+		final ArmorType armor;
 
-		PartyRole(boolean mage, BuddyRole supportAs)
+		PartyRole(boolean mage, BuddyRole supportAs, ArmorType armor)
 		{
 			this.mage = mage;
 			this.supportAs = supportAs;
+			this.armor = armor;
 		}
 
 		/** @return {@code true} for HEALER/BUFFER: outfit via the support path, behaviour driven by hand. */
@@ -457,6 +464,14 @@ public class PhantomManager implements IXmlReader
 				{
 					return DANCER;
 				}
+				case "monk":
+				case "tyrant":
+				case "fist":
+				case "gk":
+				case "khavatari":
+				{
+					return MONK;
+				}
 				case "spoiler":
 				case "spoil":
 				case "scavenger":
@@ -476,27 +491,89 @@ public class PhantomManager implements IXmlReader
 		/** A random damage-dealer role, so a bare "dd"/"dps" request yields a varied party. */
 		private static PartyRole randomDps()
 		{
-			final PartyRole[] dps =
-			{
-				WARRIOR,
-				ARCHER,
-				DAGGER,
-				NUKER
-			};
-			return dps[Rnd.get(dps.length)];
+			return DPS_ROLES[Rnd.get(DPS_ROLES.length)];
 		}
+
+		private static final PartyRole[] DPS_ROLES =
+		{
+			WARRIOR,
+			ARCHER,
+			DAGGER,
+			NUKER,
+			MONK
+		};
 	}
 
-	/** A requested recruit: the behaviour role plus an optional exact class id (0 = the role's default class). */
+	/**
+	 * @return a random damage-dealer archetype that actually exists for {@code race} (so "elf dd" never rolls a
+	 *         warrior/monk the race can't be), or {@code null} if the race has no damage archetype at all.
+	 */
+	public static PartyRole randomDpsForRace(Race race)
+	{
+		final List<PartyRole> valid = new ArrayList<>();
+		for (PartyRole dps : PartyRole.DPS_ROLES)
+		{
+			if (comboExists(race, dps))
+			{
+				valid.add(dps);
+			}
+		}
+		return valid.isEmpty() ? null : valid.get(Rnd.get(valid.size()));
+	}
+
+	/** The playable races a generic damage-dealer can be rolled from, so a bulk "N dd" call spreads across races. */
+	private static final Race[] DPS_RACES =
+	{
+		Race.HUMAN,
+		Race.ELF,
+		Race.DARK_ELF,
+		Race.ORC,
+		Race.DWARF
+	};
+
+	/**
+	 * Rolls ONE generic damage-dealer recruit with fresh race + archetype variety, so a bulk "N dd" request fills
+	 * with a varied mix instead of N identical clones (Trello #11). With an explicit {@code race} the race is kept
+	 * and only the archetype varies (a valid DPS for that race); otherwise both are rolled. The class is left at 0
+	 * so it is resolved level-aware at spawn, and the role still drives the weapon so archetypes differ even below
+	 * level 20 (where every class is still the base fighter/mage).
+	 * @param race a requested race to pin, or {@code null} to also vary the race
+	 * @return a generic-DD recruit, or {@code null} if a pinned race has no damage archetype at all
+	 */
+	public static Recruit rollDpsRecruit(Race race)
+	{
+		if (race != null)
+		{
+			final PartyRole role = randomDpsForRace(race);
+			return (role == null) ? null : new Recruit(role, 0, race);
+		}
+		final Race rolledRace = DPS_RACES[Rnd.get(DPS_RACES.length)];
+		final PartyRole role = randomDpsForRace(rolledRace);
+		// Every playable race has at least one damage archetype, but fall back defensively to a Human fighter.
+		return (role == null) ? new Recruit(PartyRole.WARRIOR, 0, Race.HUMAN) : new Recruit(role, 0, rolledRace);
+	}
+
+	/**
+	 * A requested recruit: the behaviour role, an optional exact class id (0 = the role's default class), and an
+	 * optional requested race ({@code null} = the role's default race). Race only applies to a generic-role recruit
+	 * (classId 0); a specifically named class carries its own race.
+	 */
 	public static class Recruit
 	{
 		public final PartyRole role;
 		public final int classId;
+		public final Race race;
 
 		public Recruit(PartyRole role, int classId)
 		{
+			this(role, classId, null);
+		}
+
+		public Recruit(PartyRole role, int classId, Race race)
+		{
 			this.role = role;
 			this.classId = classId;
+			this.race = race;
 		}
 	}
 
@@ -529,21 +606,31 @@ public class PhantomManager implements IXmlReader
 		{
 			return PartyRole.HEALER;
 		}
-		if (nameHas(name, "singer", "muse")) // Swordsinger / Sword Muse
-		{
-			return PartyRole.SINGER;
-		}
-		if (nameHas(name, "dancer")) // Bladedancer / Spectral Dancer
-		{
-			return PartyRole.DANCER;
-		}
 		if (nameHas(name, "prophet", "warcryer", "doomcryer", "overlord", "dominator", "shaman", "hierophant"))
 		{
 			return PartyRole.BUFFER;
 		}
+		// Mage check goes BEFORE the singer/dancer name match: mystic classes carry "singer"/"muse"/"dancer" in
+		// their names (Spellsinger, Mystic Muse) but are nukers, not party bards - only the FIGHTER bards below are.
 		if (playerClass.isMage())
 		{
 			return PartyRole.NUKER;
+		}
+		if (nameHas(name, "singer", "muse")) // Sword Singer / Sword Muse (fighter bards)
+		{
+			return PartyRole.SINGER;
+		}
+		if (nameHas(name, "dancer")) // Bladedancer / Spectral Dancer (fighter bards)
+		{
+			return PartyRole.DANCER;
+		}
+		if (nameHas(name, "monk", "tyrant", "khavatari")) // Orc fist-fighters: light armor + fist weapon
+		{
+			return PartyRole.MONK;
+		}
+		if (nameHas(name, "scavenger", "bounty", "artisan", "warsmith", "seeker", "maestro")) // Dwarves: blunt/heavy melee, not daggers (despite "hunter"/"seeker" in the names)
+		{
+			return PartyRole.WARRIOR;
 		}
 		if (nameHas(name, "ranger", "hawkeye", "sentinel", "sagittarius", "scout", "archer"))
 		{
@@ -566,6 +653,205 @@ public class PhantomManager implements IXmlReader
 			}
 		}
 		return false;
+	}
+
+	// ---------------------------------------------------------------------------------------------------------------
+	// Level- and race-aware recruit class resolution.
+	//
+	// Every recruited phantom's occupation is resolved from four inputs, in priority order: an explicitly named class,
+	// the requested race, the behaviour role, and - always - the requested level. The level fixes the occupation TIER
+	// (base < 20, 1st 20-39, 2nd 40-75, 3rd 76+); a named class or a race+role anchor is then walked along the class
+	// tree (up via getParent, down via getNextClasses) to the class that sits at that tier. So "buffer lvl 80" and
+	// "prophet lvl 80" both land a Hierophant (never a level-80 Prophet), "elf archer" a Silver Ranger line rather
+	// than a Human Rogue, and a low-level request demotes to the honest early class instead of an over-ranked one.
+	// The valid race x archetype matrix is derived from the game's own class table (below), so it can't drift from it.
+	// ---------------------------------------------------------------------------------------------------------------
+
+	/** 2nd-class (depth-2), non-summoner representative(s) of each archetype, per race - the anchor a generic role walks from. */
+	private static final Map<Race, Map<PartyRole, List<PlayerClass>>> RACE_ROLE_ANCHORS = buildRaceRoleAnchors();
+
+	private static Map<Race, Map<PartyRole, List<PlayerClass>>> buildRaceRoleAnchors()
+	{
+		final Map<Race, Map<PartyRole, List<PlayerClass>>> map = new EnumMap<>(Race.class);
+		for (PlayerClass pc : PlayerClass.values())
+		{
+			// A 2nd class is the shallowest point where every archetype is distinct; summoners are excluded so a
+			// generic "mage" never rolls a (currently unsupported) summoner - they stay requestable by exact name.
+			if ((classDepth(pc) != 2) || pc.isSummoner())
+			{
+				continue;
+			}
+			map.computeIfAbsent(pc.getRace(), r -> new EnumMap<>(PartyRole.class)).computeIfAbsent(roleForClass(pc), r -> new ArrayList<>()).add(pc);
+		}
+		return map;
+	}
+
+	/** @return the occupation tier a level implies: 0 base (&lt;20), 1 first (20-39), 2 second (40-75), 3 third (76+). */
+	private static int tierForLevel(int level)
+	{
+		return (level < 20) ? 0 : (level < 40) ? 1 : (level < 76) ? 2 : 3;
+	}
+
+	/** @return how many class transfers deep a class is (base = 0, 1st = 1, 2nd = 2, 3rd = 3). */
+	private static int classDepth(PlayerClass pc)
+	{
+		int depth = 0;
+		for (PlayerClass parent = pc.getParent(); parent != null; parent = parent.getParent())
+		{
+			depth++;
+		}
+		return depth;
+	}
+
+	/**
+	 * Walks a class along its own lineage to the occupation appropriate for a level: demotes toward the base class
+	 * when the anchor is over-ranked for the level, promotes toward the next occupation when it is under-ranked. When
+	 * a promotion step forks (e.g. Cleric -&gt; Bishop/Prophet), the child matching {@code roleBias} is preferred so
+	 * the archetype is kept; ties and unbiased forks pick at random for party variety.
+	 * @return the class at the level's tier along {@code anchor}'s lineage, or {@code anchor} itself if it can't move
+	 */
+	public static PlayerClass resolveClassForLevel(PlayerClass anchor, int level, PartyRole roleBias)
+	{
+		if (anchor == null)
+		{
+			return null;
+		}
+		final int target = tierForLevel(level);
+		PlayerClass current = anchor;
+		while (classDepth(current) > target)
+		{
+			final PlayerClass parent = current.getParent();
+			if (parent == null)
+			{
+				break;
+			}
+			current = parent;
+		}
+		while (classDepth(current) < target)
+		{
+			final PlayerClass next = pickNextClass(current, roleBias);
+			if (next == null)
+			{
+				break; // lineage ends before the target tier (shouldn't happen for our anchors)
+			}
+			current = next;
+		}
+		return current;
+	}
+
+	/** Picks the next occupation when promoting: a child whose archetype matches {@code roleBias} if any, else random. */
+	private static PlayerClass pickNextClass(PlayerClass pc, PartyRole roleBias)
+	{
+		final Set<PlayerClass> nextClasses = pc.getNextClasses();
+		if ((nextClasses == null) || nextClasses.isEmpty())
+		{
+			return null;
+		}
+		final List<PlayerClass> options = new ArrayList<>(nextClasses);
+		if (roleBias != null)
+		{
+			final List<PlayerClass> matching = new ArrayList<>();
+			for (PlayerClass option : options)
+			{
+				if (roleForClass(option) == roleBias)
+				{
+					matching.add(option);
+				}
+			}
+			if (!matching.isEmpty())
+			{
+				return matching.get(Rnd.get(matching.size()));
+			}
+		}
+		return options.get(Rnd.get(options.size()));
+	}
+
+	/** @return a random 2nd-class representative of {@code role} for {@code race}, or {@code null} if the race has no such archetype. */
+	private static PlayerClass anchorFor(Race race, PartyRole role)
+	{
+		final Map<PartyRole, List<PlayerClass>> byRole = RACE_ROLE_ANCHORS.get(race);
+		if (byRole == null)
+		{
+			return null;
+		}
+		final List<PlayerClass> pool = byRole.get(role);
+		return ((pool == null) || pool.isEmpty()) ? null : pool.get(Rnd.get(pool.size()));
+	}
+
+	/**
+	 * @return {@code true} if {@code race} actually has a class of archetype {@code role} in the Interlude class tree
+	 *         (e.g. false for an Orc archer, an Elf buffer, a Dwarf mage) - used to reject impossible recruit combos.
+	 */
+	public static boolean comboExists(Race race, PartyRole role)
+	{
+		final Map<PartyRole, List<PlayerClass>> byRole = RACE_ROLE_ANCHORS.get(race);
+		return (byRole != null) && (byRole.get(role) != null) && !byRole.get(role).isEmpty();
+	}
+
+	/** The race a generic role defaults to when none is requested: the archetype's home race (Human where it has one). */
+	private static Race defaultRaceFor(PartyRole role)
+	{
+		switch (role)
+		{
+			case SINGER:
+			{
+				return Race.ELF;
+			}
+			case DANCER:
+			{
+				return Race.DARK_ELF;
+			}
+			case MONK:
+			{
+				return Race.ORC;
+			}
+			default:
+			{
+				return Race.HUMAN;
+			}
+		}
+	}
+
+	/**
+	 * @return {@code true} if a class is worth requesting by its exact name: any 2nd-or-higher occupation (as before),
+	 *         plus the distinctive multi-word 1st classes (Palus Knight, Elven Knight, Orc Raider, ...) so a request
+	 *         like "palus knight lvl 22" lands the right race+archetype. Generic single-word 1st/base names (fighter,
+	 *         knight, warrior, cleric, ...) are deliberately excluded so they stay race-flexible role tokens.
+	 */
+	public static boolean isRequestableByName(PlayerClass pc)
+	{
+		final int depth = classDepth(pc);
+		return (depth >= 2) || ((depth == 1) && (pc.name().indexOf('_') >= 0));
+	}
+
+	/**
+	 * Resolves the concrete class id a recruited phantom spawns as, honouring an explicitly named class, the requested
+	 * race, the role, and always the level (see the block comment above).
+	 * @return a spawnable class id, or -1 when nothing fits (the caller degrades to a plain fighter/mage)
+	 */
+	public static int resolveRecruitClassId(PartyRole role, Race requestedRace, int level, int overrideClassId)
+	{
+		if (overrideClassId > 0)
+		{
+			final PlayerClass named = PlayerClass.getPlayerClass(overrideClassId);
+			if (named != null)
+			{
+				final PlayerClass resolved = resolveClassForLevel(named, level, roleForClass(named));
+				return (resolved == null) ? -1 : resolved.getId();
+			}
+		}
+		final Race race = (requestedRace != null) ? requestedRace : defaultRaceFor(role);
+		PlayerClass anchor = anchorFor(race, role);
+		if (anchor == null) // requested race lacks this archetype: fall back to the archetype's home race
+		{
+			anchor = anchorFor(defaultRaceFor(role), role);
+		}
+		if (anchor == null)
+		{
+			return -1;
+		}
+		final PlayerClass resolved = resolveClassForLevel(anchor, level, role);
+		return (resolved == null) ? -1 : resolved.getId();
 	}
 
 	/**
@@ -1431,7 +1717,7 @@ public class PhantomManager implements IXmlReader
 			(byte) ((hairStyle >= 0) ? Math.min(hairStyle, 2) : Rnd.get(0, 2)), female);
 
 		// Persistent from birth: created straight onto the regular account (no promotion step needed).
-		final Player phantom = Player.create(template, ACCOUNT_NAME_REGULAR, name, appearance);
+		final Player phantom = Player.create(template, ACCOUNT_NAME_REGULAR, name, appearance, true);
 		if (phantom == null)
 		{
 			return "Creation failed (duplicate name / db error?).";
@@ -1640,7 +1926,7 @@ public class PhantomManager implements IXmlReader
 			}
 			else
 			{
-				phantom = Player.create(template, (regular != null) ? ACCOUNT_NAME_REGULAR : ACCOUNT_NAME, (regular != null) ? regular.name : nextName(), appearance);
+				phantom = Player.create(template, (regular != null) ? ACCOUNT_NAME_REGULAR : ACCOUNT_NAME, (regular != null) ? regular.name : nextName(), appearance, true);
 				if (phantom == null)
 				{
 					LOGGER.warning(getClass().getSimpleName() + ": Player.create returned null (duplicate name / db error?).");
@@ -1923,8 +2209,11 @@ public class PhantomManager implements IXmlReader
 			{
 				continue;
 			}
-			// Only beneficial buffs - never stock reagents for offensive/summon/debuff skills.
-			if (skill.isContinuous() && (skill.getEffectPoint() >= 0) && !skill.isDebuff())
+			// Beneficial buffs AND reagent-consuming heals (a healer's Major Heal / Major Group Heal eat Spirit Ore),
+			// never offensive/summon/debuff skills. A pure Bishop/Cardinal healer knows no reagent-consuming BUFF, so
+			// without the heal case it carried zero Spirit Ore and could never cast its top heals - they'd be skipped
+			// every tick by the reagent guard. effectPoint >= 0 && !isDebuff() keeps offensive skills out.
+			if ((skill.getEffectPoint() >= 0) && !skill.isDebuff() && (skill.isContinuous() || skill.hasEffectType(EffectType.HEAL)))
 			{
 				reagents.add(skill.getItemConsumeId());
 			}
@@ -2039,40 +2328,87 @@ public class PhantomManager implements IXmlReader
 		phantom.getAutoUseSettings().setAutoPotionItem(HP_POTION_ID);
 		phantom.getAutoPlaySettings().setAutoPotionPercent(HP_POTION_PERCENT);
 
-		// Armor pieces: a varied at-or-below-grade piece per slot. Completeness varies (chest almost
-		// always, helmet/gloves often skipped) so a group is not a row of identical fully-armored clones.
-		// Orc casters (Warcryer) skip the armor ids that have no orc model and would render invisibly.
-		final Set<Integer> skip = (mage && (phantom.getRace() == Race.ORC)) ? ORC_CASTER_ARMOR_SKIP : null;
-		for (BodyPart slot : GEAR_SLOTS)
-		{
-			if (slot == BodyPart.R_HAND)
-			{
-				continue;
-			}
-			if ((slot == BodyPart.HEAD) && (Rnd.get(100) >= 55))
-			{
-				continue;
-			}
-			if ((slot == BodyPart.GLOVES) && (Rnd.get(100) >= 60))
-			{
-				continue;
-			}
-			if ((slot == BodyPart.FEET) && (Rnd.get(100) >= 85))
-			{
-				continue;
-			}
-			if ((slot == BodyPart.LEGS) && (Rnd.get(100) >= 92))
-			{
-				continue;
-			}
-			final ItemTemplate piece = pickForSlot(set, slot, desired, skip);
-			if (piece != null)
-			{
-				equip(phantom, piece);
-			}
-		}
+		// Armor: a full matching set (Karmian / Mithril / Full Plate, ...) for the loadout's family, so a field
+		// hunter wears a coherent outfit instead of a random per-slot mix. Fighters roll light or heavy for variety.
+		final ArmorType family = mage ? ArmorType.MAGIC : (Rnd.get(100) < 55 ? ArmorType.LIGHT : ArmorType.HEAVY);
+		equipArmorSet(phantom, family, desired, 0, false);
+
+		// Jewelry: necklace + two earrings + two rings, for the extra P./M.Def that keeps a field hunter alive.
+		equipJewelry(phantom, BodyPart.NECK, desired, 1);
+		equipJewelry(phantom, BodyPart.LR_EAR, desired, 2);
+		equipJewelry(phantom, BodyPart.LR_FINGER, desired, 2);
+
 		// No broadcast here: gear() runs before the phantom enters the world, so the whole set is in place
 		// for the spawn CharInfo (enterWorld broadcasts afterwards).
+	}
+
+	/**
+	 * Equips a coherent matching armor set (from {@link FakePlayerArmorSets}) for {@code family}/{@code grade},
+	 * filling any slot the set does not define from the best in-family (body) or generic (extremity) piece, so no
+	 * slot is left bare. A one-piece full-body chest correctly leaves the legs slot empty. With {@code wantShield}
+	 * the set's shield (or the best shield in grade) is added.
+	 */
+	private void equipArmorSet(Player phantom, ArmorType family, CrystalType grade, int enchant, boolean wantShield)
+	{
+		final FakePlayerArmorSets.Outfit outfit = FakePlayerArmorSets.random(family, grade);
+		if (outfit == null)
+		{
+			// No set for this family/grade - fall back to best per-slot (body family-correct, extremities agnostic).
+			for (BodyPart slot : GEAR_SLOTS)
+			{
+				if (slot == BodyPart.R_HAND)
+				{
+					continue;
+				}
+				final ItemTemplate piece = bestArmor(slot, grade, family, null);
+				if (piece != null)
+				{
+					equip(phantom, piece, enchant);
+				}
+			}
+			if (wantShield)
+			{
+				equipPiece(phantom, bestEquip(grade, item -> (item instanceof Armor) && (((Armor) item).getItemType() == ArmorType.SHIELD)), enchant);
+			}
+			return;
+		}
+		equipById(phantom, outfit.chest, enchant);
+		if (!outfit.onepiece)
+		{
+			equipPiece(phantom, (outfit.legs > 0) ? ItemData.getInstance().getTemplate(outfit.legs) : bestArmor(BodyPart.LEGS, grade, family, null), enchant);
+		}
+		equipPiece(phantom, (outfit.gloves > 0) ? ItemData.getInstance().getTemplate(outfit.gloves) : bestArmor(BodyPart.GLOVES, grade, family, null), enchant);
+		equipPiece(phantom, (outfit.feet > 0) ? ItemData.getInstance().getTemplate(outfit.feet) : bestArmor(BodyPart.FEET, grade, family, null), enchant);
+		equipPiece(phantom, (outfit.head > 0) ? ItemData.getInstance().getTemplate(outfit.head) : bestArmor(BodyPart.HEAD, grade, family, null), enchant);
+		if (wantShield)
+		{
+			if (outfit.shield > 0)
+			{
+				equipById(phantom, outfit.shield, enchant);
+			}
+			else
+			{
+				equipPiece(phantom, bestEquip(grade, item -> (item instanceof Armor) && (((Armor) item).getItemType() == ArmorType.SHIELD)), enchant);
+			}
+		}
+	}
+
+	/** Resolves an item id to its template and equips it (with enchant); no-op if the id is 0 / unknown. */
+	private void equipById(Player phantom, int itemId, int enchant)
+	{
+		if (itemId > 0)
+		{
+			equipPiece(phantom, ItemData.getInstance().getTemplate(itemId), enchant);
+		}
+	}
+
+	/** Equips a resolved template (with enchant); no-op if {@code template} is {@code null}. */
+	private void equipPiece(Player phantom, ItemTemplate template, int enchant)
+	{
+		if (template != null)
+		{
+			equip(phantom, template, enchant);
+		}
 	}
 
 	/**
@@ -2094,8 +2430,11 @@ public class PhantomManager implements IXmlReader
 	{
 		final CrystalType grade = gradeForLevel(level);
 		// A chance this member is an enchanted player; if so, a modest uniform enchant on weapon + armor (jewelry is
-		// not enchantable in Interlude, so it stays +0).
-		final int enchant = (Rnd.get(100) < PARTY_ENCHANT_CHANCE) ? Rnd.get(PARTY_ENCHANT_MIN, PARTY_ENCHANT_MAX + 1) : 0;
+		// not enchantable in Interlude, so it stays +0). Chance and +min..+max range are configurable
+		// (FakePlayerRecruitEnchant* in FakePlayers.ini); values are clamped so bad config can't throw.
+		final int enchantMin = Math.max(0, FakePlayersConfig.FAKE_PLAYER_RECRUIT_ENCHANT_MIN);
+		final int enchantMax = Math.max(enchantMin, FakePlayersConfig.FAKE_PLAYER_RECRUIT_ENCHANT_MAX);
+		final int enchant = (Rnd.get(100) < FakePlayersConfig.FAKE_PLAYER_RECRUIT_ENCHANT_CHANCE) ? Rnd.get(enchantMin, enchantMax + 1) : 0;
 
 		// Weapon (best in grade for the role) + matching shots (+ arrows for a bow).
 		final ItemTemplate weapon = partyWeapon(role, mage, grade);
@@ -2120,33 +2459,11 @@ public class PhantomManager implements IXmlReader
 		phantom.getAutoUseSettings().setAutoPotionItem(HP_POTION_ID);
 		phantom.getAutoPlaySettings().setAutoPotionPercent(HP_POTION_PERCENT);
 
-		// Full armor set: every slot, best in grade, no random gaps. Orc casters still skip the ids that have no
-		// orc model and would render invisibly.
-		final Set<Integer> skip = (mage && (phantom.getRace() == Race.ORC)) ? ORC_CASTER_ARMOR_SKIP : null;
-		final boolean preferHeavy = (role == PartyRole.TANK); // a tank wants the highest mitigation it can wear
-		for (BodyPart slot : GEAR_SLOTS)
-		{
-			if (slot == BodyPart.R_HAND)
-			{
-				continue;
-			}
-			final ItemTemplate piece = bestArmor(slot, grade, mage, skip, preferHeavy);
-			if (piece != null)
-			{
-				equip(phantom, piece, enchant);
-			}
-		}
-
-		// Shield for the tank (a big chunk of a knight's mitigation + block) - and the singer, a knight-line class
-		// that fights sword-and-board while it keeps the songs running.
-		if ((role == PartyRole.TANK) || (role == PartyRole.SINGER))
-		{
-			final ItemTemplate shield = bestEquip(grade, item -> (item instanceof Armor) && (((Armor) item).getItemType() == ArmorType.SHIELD));
-			if (shield != null)
-			{
-				equip(phantom, shield, enchant);
-			}
-		}
+		// Full matching armor set in the class's practical armor family (Heavy for tanks/warriors/singer/dancer,
+		// Light for archer/dagger/monk, robe for casters) - a coherent set (Karmian / Full Plate, ...) rather than a
+		// random per-slot mix, with the tank/singer also getting the set's shield. Any slot the set omits is filled
+		// with the best in-family/generic piece.
+		equipArmorSet(phantom, role.armor, grade, enchant, (role == PartyRole.TANK) || (role == PartyRole.SINGER));
 
 		// Jewelry: necklace + two earrings + two rings (matched by body part; the engine fills both ears/fingers).
 		equipJewelry(phantom, BodyPart.NECK, grade, 1);
@@ -2214,6 +2531,15 @@ public class PhantomManager implements IXmlReader
 				return dual;
 			}
 		}
+		else if (role == PartyRole.MONK)
+		{
+			// Fist fighters (Tyrant / Grand Khavatari) wield fist weapons - the DUALFIST/FIST types.
+			final ItemTemplate fist = bestEquip(grade, item -> (item instanceof Weapon) && ((((Weapon) item).getItemType() == WeaponType.DUALFIST) || (((Weapon) item).getItemType() == WeaponType.FIST)));
+			if (fist != null)
+			{
+				return fist;
+			}
+		}
 		else if (role == PartyRole.BOUNTY_HUNTER)
 		{
 			final ItemTemplate blunt = bestEquip(grade, item -> (item instanceof Weapon) && (((Weapon) item).getItemType() == WeaponType.BLUNT));
@@ -2227,18 +2553,25 @@ public class PhantomManager implements IXmlReader
 		return bestEquip(grade, item -> (item instanceof Weapon) && (((Weapon) item).getItemType() == WeaponType.SWORD) && (!oneHandOnly || (item.getBodyPart() == BodyPart.R_HAND)));
 	}
 
-	/** Best-in-grade armor piece for a slot: a tank prefers HEAVY (falls back to any), casters take MAGIC, others LIGHT/HEAVY. */
-	private static ItemTemplate bestArmor(BodyPart slot, CrystalType grade, boolean mage, Set<Integer> skip, boolean preferHeavy)
+	/**
+	 * Best-in-grade armor piece for a slot in the class's practical armor {@code family} (MAGIC=robe / LIGHT / HEAVY).
+	 * Falls back to any armor family if the desired one has no piece in that slot/grade, so a slot is never left bare
+	 * (e.g. a family that lacks a helmet at some grade still gets one rather than a hole in the set).
+	 */
+	private static ItemTemplate bestArmor(BodyPart slot, CrystalType grade, ArmorType family, Set<Integer> skip)
 	{
-		if (preferHeavy)
+		// Gloves / boots / helmet are family-agnostic (ArmorType.NONE) - any class wears any of them, so pick the
+		// best regardless of family (a family filter would match nothing and leave the slot bare).
+		if ((slot == BodyPart.GLOVES) || (slot == BodyPart.FEET) || (slot == BodyPart.HEAD))
 		{
-			final ItemTemplate heavy = bestArmorOfTypes(slot, grade, skip, EnumSet.of(ArmorType.HEAVY));
-			if (heavy != null)
-			{
-				return heavy;
-			}
+			return bestArmorOfTypes(slot, grade, skip, EnumSet.of(ArmorType.NONE, ArmorType.LIGHT, ArmorType.HEAVY, ArmorType.MAGIC));
 		}
-		return bestArmorOfTypes(slot, grade, skip, mage ? EnumSet.of(ArmorType.MAGIC) : EnumSet.of(ArmorType.LIGHT, ArmorType.HEAVY));
+		final ItemTemplate exact = bestArmorOfTypes(slot, grade, skip, EnumSet.of(family));
+		if (exact != null)
+		{
+			return exact;
+		}
+		return bestArmorOfTypes(slot, grade, skip, EnumSet.of(ArmorType.LIGHT, ArmorType.HEAVY, ArmorType.MAGIC));
 	}
 
 	private static ItemTemplate bestArmorOfTypes(BodyPart slot, CrystalType grade, Set<Integer> skip, Set<ArmorType> allowed)
@@ -2284,9 +2617,9 @@ public class PhantomManager implements IXmlReader
 			ItemTemplate best = null;
 			for (ItemTemplate item : ItemData.getInstance().getAllItems())
 			{
-				if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0) || (item.getCrystalType() != grade))
+				if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0) || (item.getCrystalType() != grade) || !FakePlayerGearFilter.isPlayerGear(item))
 				{
-					continue;
+					continue; // skip pet/summon/monster gear that renders as a sack / invisible slot
 				}
 				if (filter.test(item) && ((best == null) || (item.getReferencePrice() > best.getReferencePrice())))
 				{
@@ -2479,9 +2812,9 @@ public class PhantomManager implements IXmlReader
 			initGearMap(MAGE_GEAR);
 			for (ItemTemplate item : ItemData.getInstance().getAllItems())
 			{
-				if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0))
+				if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0) || !FakePlayerGearFilter.isPlayerGear(item))
 				{
-					continue;
+					continue; // skip pet/summon/monster gear that renders as a sack / invisible slot
 				}
 
 				if (item instanceof Weapon)
@@ -2502,19 +2835,27 @@ public class PhantomManager implements IXmlReader
 				else if (item instanceof Armor)
 				{
 					final BodyPart part = item.getBodyPart();
-					if ((part != BodyPart.CHEST) && (part != BodyPart.LEGS) && (part != BodyPart.GLOVES) && (part != BodyPart.FEET) && (part != BodyPart.HEAD))
+					if ((part == BodyPart.GLOVES) || (part == BodyPart.FEET) || (part == BodyPart.HEAD))
 					{
-						continue; // skip FULL_ARMOR (conflicts with separate legs) and non-armor slots
-					}
-					final ArmorType type = ((Armor) item).getItemType();
-					if ((type == ArmorType.LIGHT) || (type == ArmorType.HEAVY))
-					{
+						// Gloves / boots / helmet are family-agnostic (ArmorType.NONE) - any class wears them, so
+						// they go into both the fighter and the mage loadout. (Without this they'd be dropped by
+						// the family check below and phantoms would show bare hands/feet/head.)
 						FIGHTER_GEAR.get(part).get(item.getCrystalType()).add(item);
-					}
-					else if (type == ArmorType.MAGIC)
-					{
 						MAGE_GEAR.get(part).get(item.getCrystalType()).add(item);
 					}
+					else if ((part == BodyPart.CHEST) || (part == BodyPart.LEGS))
+					{
+						final ArmorType type = ((Armor) item).getItemType();
+						if ((type == ArmorType.LIGHT) || (type == ArmorType.HEAVY))
+						{
+							FIGHTER_GEAR.get(part).get(item.getCrystalType()).add(item);
+						}
+						else if (type == ArmorType.MAGIC)
+						{
+							MAGE_GEAR.get(part).get(item.getCrystalType()).add(item);
+						}
+					}
+					// else FULL_ARMOR (conflicts with separate legs), shields and jewelry - not used by the ambient loadout
 				}
 			}
 			trimGear(FIGHTER_GEAR);
@@ -2808,6 +3149,17 @@ public class PhantomManager implements IXmlReader
 	 */
 	public Player spawnPartyMember(Location location, int level, PartyRole role, int overrideClassId)
 	{
+		return spawnPartyMember(location, level, role, overrideClassId, null);
+	}
+
+	/**
+	 * As {@link #spawnPartyMember(Location, int, PartyRole, int)}, but honouring a requested race for a generic-role
+	 * recruit (a named class carries its own race). The concrete occupation is resolved level-aware via
+	 * {@link #resolveRecruitClassId} - so the class always matches the requested level's tier.
+	 * @return the spawned member, or {@code null} on failure (caller should fall back gracefully)
+	 */
+	public Player spawnPartyMember(Location location, int level, PartyRole role, int overrideClassId, Race requestedRace)
+	{
 		if (_phantoms.size() >= MAX_PHANTOMS)
 		{
 			return null;
@@ -2817,8 +3169,8 @@ public class PhantomManager implements IXmlReader
 		try
 		{
 			final boolean mage = role.mage;
-			// A specific requested class (e.g. Shillien Elder) overrides the role's default occupation.
-			final int classId = (overrideClassId > 0) ? overrideClassId : (role.isSupport() ? role.supportAs.classId : Math.max(0, roleClassId(role, level)));
+			// Resolve the exact occupation from role + requested race/class + level (base/1st/2nd/3rd by level).
+			final int classId = resolveRecruitClassId(role, requestedRace, level, overrideClassId);
 			PlayerClass playerClass = PlayerClass.getPlayerClass(classId);
 			PlayerTemplate template = (playerClass == null) ? null : PlayerTemplateData.getInstance().getTemplate(playerClass);
 			if (template == null) // bad/missing class id: degrade to a plain fighter/mage base
@@ -2839,7 +3191,7 @@ public class PhantomManager implements IXmlReader
 
 			final boolean female = Rnd.nextBoolean();
 			final PlayerAppearance appearance = new PlayerAppearance((byte) Rnd.get(0, 2), (byte) Rnd.get(0, 3), (byte) Rnd.get(0, 2), female);
-			final Player phantom = Player.create(template, ACCOUNT_NAME, nextName(), appearance);
+			final Player phantom = Player.create(template, ACCOUNT_NAME, nextName(), appearance, true);
 			if (phantom == null)
 			{
 				LOGGER.warning(getClass().getSimpleName() + ": Player.create returned null for party member (duplicate name / db error?).");
@@ -2851,12 +3203,12 @@ public class PhantomManager implements IXmlReader
 			if (role.isSupport())
 			{
 				// The phantom was already created from the right support class template (default or override), so
-				// outfitSupport just levels/learns/gears it (no class transfer needed).
+				// outfitSupport just levels/learns/gears it (no class transfer needed). Resurrection is NOT
+				// force-granted: outfitSupport's learnAllSkills teaches the class's complete tree (parents included),
+				// so any rez-capable class - the Cleric/Oracle line (HEALER) and the Prophet line (BUFFER, which
+				// inherits Cleric's Resurrection) - naturally knows Resurrection once its level qualifies (skill 1016,
+				// learned at 20). A class/level that never learned it simply cannot rez, by design.
 				outfitSupport(phantom, level, role);
-				if (role == PartyRole.HEALER)
-				{
-					grantRes(phantom, level); // every healer can raise a fallen party member
-				}
 			}
 			else
 			{
@@ -3067,97 +3419,6 @@ public class PhantomManager implements IXmlReader
 			grade = (grade.ordinal() > 0) ? CrystalType.values()[grade.ordinal() - 1] : null;
 		}
 		return null;
-	}
-
-	/** Standard Interlude occupation id for a combat role at its level tier (base / 1st / 2nd class). */
-	private static int roleClassId(PartyRole role, int level)
-	{
-		final int tier = (level < 20) ? 0 : (level < 40) ? 1 : 2;
-		switch (role)
-		{
-			case TANK:
-			{
-				return new int[]
-				{
-					0,
-					4,
-					5
-				}[tier]; // Human Fighter / Knight / Paladin
-			}
-			case WARRIOR:
-			{
-				return new int[]
-				{
-					0,
-					1,
-					2
-				}[tier]; // Human Fighter / Warrior / Gladiator
-			}
-			case ARCHER:
-			{
-				return new int[]
-				{
-					0,
-					7,
-					9
-				}[tier]; // Human Fighter / Rogue / Hawkeye
-			}
-			case DAGGER:
-			{
-				return new int[]
-				{
-					0,
-					7,
-					8
-				}[tier]; // Human Fighter / Rogue / Treasure Hunter
-			}
-			case SINGER:
-			{
-				return new int[]
-				{
-					18,
-					19,
-					21
-				}[tier]; // Elven Fighter / Elven Knight / Swordsinger
-			}
-			case DANCER:
-			{
-				return new int[]
-				{
-					31,
-					32,
-					34
-				}[tier]; // Dark Fighter / Palus Knight / Bladedancer
-			}
-			case NUKER:
-			{
-				return new int[]
-				{
-					10,
-					11,
-					12
-				}[tier]; // Human Mage / Wizard / Sorcerer
-			}
-			default:
-			{
-				return -1;
-			}
-		}
-	}
-
-	/** Grants Resurrection (1016) to a healer so it can raise dead party members, scaled to its level. */
-	private void grantRes(Player phantom, int level)
-	{
-		if (phantom.getKnownSkill(1016) != null)
-		{
-			return;
-		}
-		final int resLevel = Math.max(1, Math.min(9, level / 8));
-		final Skill res = SkillData.getInstance().getSkill(1016, resLevel);
-		if (res != null)
-		{
-			phantom.addSkill(res, true);
-		}
 	}
 
 	private synchronized void startSupervising()

@@ -22,10 +22,12 @@ package org.l2jmobius.gameserver.network.serverpackets;
 
 import org.l2jmobius.commons.network.WritableBuffer;
 import org.l2jmobius.gameserver.data.sql.ClanTable;
+import org.l2jmobius.gameserver.data.xml.PlayerTemplateData;
 import org.l2jmobius.gameserver.model.actor.Npc;
 import org.l2jmobius.gameserver.model.actor.enums.player.Sex;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerAppearance;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerHolder;
+import org.l2jmobius.gameserver.model.actor.templates.PlayerTemplate;
 import org.l2jmobius.gameserver.model.clan.Clan;
 import org.l2jmobius.gameserver.network.GameClient;
 import org.l2jmobius.gameserver.network.ServerPackets;
@@ -51,6 +53,8 @@ public class FakePlayerInfo extends ServerPacket
 	private final int _flyWalkSpd;
 	private final double _moveMultiplier;
 	private final float _attackSpeedMultiplier;
+	private final double _collisionRadius;
+	private final double _collisionHeight;
 	private final FakePlayerHolder _fpcHolder;
 	private final FakePlayerAppearance _look; // per-instance override; null = use template
 	private final Clan _clan;
@@ -74,6 +78,23 @@ public class FakePlayerInfo extends ServerPacket
 		_swimWalkSpd = (int) Math.round(npc.getSwimWalkSpeed() / _moveMultiplier);
 		_flyRunSpd = npc.isFlying() ? _runSpd : 0;
 		_flyWalkSpd = npc.isFlying() ? _walkSpd : 0;
+		// A generated look renders as a real player race+sex model, so the client must receive that
+		// race/sex collision size - not the shared base NPC template's - otherwise short races (dwarf)
+		// float above the ground and tall races (orc) sink into it. Falls back to the NPC values when
+		// there is no per-instance look or no matching player template.
+		double collisionRadius = npc.getCollisionRadius();
+		double collisionHeight = npc.getCollisionHeight();
+		if (_look != null)
+		{
+			final PlayerTemplate playerTemplate = PlayerTemplateData.getInstance().getTemplate(_look.getPlayerClass());
+			if (playerTemplate != null)
+			{
+				collisionRadius = _look.isFemale() ? playerTemplate.getFCollisionRadiusFemale() : playerTemplate.getFCollisionRadius();
+				collisionHeight = _look.isFemale() ? playerTemplate.getFCollisionHeightFemale() : playerTemplate.getFCollisionHeight();
+			}
+		}
+		_collisionRadius = collisionRadius;
+		_collisionHeight = collisionHeight;
 		_fpcHolder = npc.getTemplate().getFakePlayerInfo();
 		_clan = _look != null ? null : ClanTable.getInstance().getClan(_fpcHolder.getClanId());
 	}
@@ -144,8 +165,8 @@ public class FakePlayerInfo extends ServerPacket
 		buffer.writeInt(_flyWalkSpd);
 		buffer.writeDouble(_moveMultiplier);
 		buffer.writeDouble(_attackSpeedMultiplier);
-		buffer.writeDouble(_npc.getCollisionRadius());
-		buffer.writeDouble(_npc.getCollisionHeight());
+		buffer.writeDouble(_collisionRadius);
+		buffer.writeDouble(_collisionHeight);
 		buffer.writeInt(_look != null ? _look.getHairStyle() : _fpcHolder.getHair());
 		buffer.writeInt(_look != null ? _look.getHairColor() : _fpcHolder.getHairColor());
 		buffer.writeInt(_look != null ? _look.getFace() : _fpcHolder.getFace());

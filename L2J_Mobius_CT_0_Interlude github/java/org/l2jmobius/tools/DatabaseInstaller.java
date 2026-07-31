@@ -119,7 +119,7 @@ public class DatabaseInstaller extends JFrame
 		// Show Splash Screen for 3 seconds.
 		new SplashScreen(".." + File.separator + "images" + File.separator + "splash.png", 3000, this);
 		
-		setTitle("Mobius - Database Installer");
+		setTitle("Living Worlds - Database Installer");
 		setMinimumSize(new Dimension(620, 400));
 		setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
 		setLocationRelativeTo(null);

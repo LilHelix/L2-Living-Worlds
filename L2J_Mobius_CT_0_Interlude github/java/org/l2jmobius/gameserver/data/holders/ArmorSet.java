@@ -238,7 +238,32 @@ public class ArmorSet
 	{
 		return _chestId;
 	}
-	
+
+	public List<Integer> getLegs()
+	{
+		return _legs;
+	}
+
+	public List<Integer> getHead()
+	{
+		return _head;
+	}
+
+	public List<Integer> getGloves()
+	{
+		return _gloves;
+	}
+
+	public List<Integer> getFeet()
+	{
+		return _feet;
+	}
+
+	public List<Integer> getShieldIds()
+	{
+		return _shield;
+	}
+
 	public List<SkillHolder> getSkills()
 	{
 		return _skills;

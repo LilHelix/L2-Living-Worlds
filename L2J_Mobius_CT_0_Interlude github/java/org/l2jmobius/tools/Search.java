@@ -193,7 +193,7 @@ public class Search extends JFrame
 			setIconImages(icons);
 		}
 		
-		setTitle("Mobius - Search");
+		setTitle("Living Worlds - Search");
 		setMinimumSize(new Dimension(800, 600));
 		setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
 		setLocationRelativeTo(null);
@@ -741,7 +741,7 @@ public class Search extends JFrame
 		
 		// Update window title to show "Searching for...".
 		final String truncatedPattern = regexPattern.length() > 50 ? regexPattern.substring(0, 50) : regexPattern;
-		setTitle("Mobius - Searching for " + truncatedPattern + "...");
+		setTitle("Living Worlds - Searching for " + truncatedPattern + "...");
 		final long startTime = System.currentTimeMillis();
 		
 		// Show progress bar.
@@ -842,7 +842,7 @@ public class Search extends JFrame
 				_timeLabel.setText("Search complete in " + TimeUtil.formatDuration(System.currentTimeMillis() - startTime) + ".");
 				
 				// Reset window title.
-				setTitle("Mobius - Search");
+				setTitle("Living Worlds - Search");
 			}
 		};
 		

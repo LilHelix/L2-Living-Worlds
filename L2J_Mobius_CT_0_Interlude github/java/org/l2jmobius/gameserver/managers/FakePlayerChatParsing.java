@@ -161,16 +161,31 @@ public final class FakePlayerChatParsing
 		return 1;
 	}
 
-	/** A "N x &lt;token&gt;" recruit request parsed from a party call, before the token is resolved to a role/class. */
+	// Race adjectives a recruiter can put in front of a role ("elf archer", "dark elf tank"). Kept as bare strings
+	// here (this class stays game-type-free); the manager maps them to the game's Race enum. "dark" is handled
+	// specially in the loop so the two-word "dark elf" resolves to DARK_ELF rather than being read as plain Elf.
+	private static final java.util.Set<String> RACE_TOKENS = java.util.Set.of("human", "elf", "elven", "orc", "orcish", "dwarf", "dwarven", "de", "delf", "darkelf");
+
+	/**
+	 * A "N x &lt;token&gt;" recruit request parsed from a party call, before the token is resolved to a role/class,
+	 * plus an optional race adjective that preceded it ({@code null} = none; "dark_elf" for a two-word "dark elf").
+	 */
 	public static final class RoleRequest
 	{
 		public final String token;
 		public final int count;
+		public final String race;
 
 		public RoleRequest(String token, int count)
 		{
+			this(token, count, null);
+		}
+
+		public RoleRequest(String token, int count, String race)
+		{
 			this.token = token;
 			this.count = count;
+			this.race = race;
 		}
 	}
 
@@ -192,7 +207,9 @@ public final class FakePlayerChatParsing
 		}
 
 		int pendingCount = 1;
+		String pendingRace = null; // a race adjective attaches to the next role/class word ("elf" -> "elf archer")
 		boolean levelToken = false; // the number right after "lvl"/"level"/"lv" is a level, not a count
+		boolean sawDark = false; // "dark" seen; if "elf"/"elven" follows it is a DARK_ELF, else "dark" is ignored
 		for (String token : remainingText.toLowerCase().split("[^a-z0-9]+"))
 		{
 			if (token.isEmpty())
@@ -215,10 +232,143 @@ public final class FakePlayerChatParsing
 				continue;
 			}
 			levelToken = false;
-			requests.add(new RoleRequest(token, pendingCount));
-			pendingCount = 1; // a number only applies to the class/role word right after it
+			if (token.equals("dark"))
+			{
+				sawDark = true; // wait to see if "elf" follows
+				continue;
+			}
+			if (RACE_TOKENS.contains(token))
+			{
+				pendingRace = (sawDark && (token.equals("elf") || token.equals("elven"))) ? "dark_elf" : token;
+				sawDark = false;
+				continue; // a race word is a modifier, not a recruit on its own
+			}
+			sawDark = false;
+			requests.add(new RoleRequest(token, pendingCount, pendingRace));
+			pendingCount = 1; // a number/race only applies to the class/role word right after it
+			pendingRace = null;
 		}
 		return requests;
+	}
+
+	/**
+	 * Optimal string alignment (Damerau-Levenshtein) distance between two lowercase tokens: insert, delete,
+	 * substitute and adjacent transposition each cost 1. Used to forgive a single typo in a recruited class/role
+	 * token, so "warcyer" -&gt; "warcryer" and "bishpo" -&gt; "bishop" still resolve.
+	 * @return the edit distance, or {@link Integer#MAX_VALUE} if either input is {@code null}
+	 */
+	public static int editDistance(String a, String b)
+	{
+		if ((a == null) || (b == null))
+		{
+			return Integer.MAX_VALUE;
+		}
+		final int la = a.length();
+		final int lb = b.length();
+		if (la == 0)
+		{
+			return lb;
+		}
+		if (lb == 0)
+		{
+			return la;
+		}
+		int[] prevPrev = new int[lb + 1];
+		int[] prev = new int[lb + 1];
+		int[] curr = new int[lb + 1];
+		for (int j = 0; j <= lb; j++)
+		{
+			prev[j] = j;
+		}
+		for (int i = 1; i <= la; i++)
+		{
+			curr[0] = i;
+			final char ca = a.charAt(i - 1);
+			for (int j = 1; j <= lb; j++)
+			{
+				final char cb = b.charAt(j - 1);
+				final int cost = (ca == cb) ? 0 : 1;
+				int v = Math.min(Math.min(curr[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+				if ((i > 1) && (j > 1) && (ca == b.charAt(j - 2)) && (a.charAt(i - 2) == cb))
+				{
+					v = Math.min(v, prevPrev[j - 2] + 1); // adjacent transposition ("bishpo" <-> "bishop")
+				}
+				curr[j] = v;
+			}
+			final int[] tmp = prevPrev;
+			prevPrev = prev;
+			prev = curr;
+			curr = tmp;
+		}
+		return prev[lb];
+	}
+
+	/**
+	 * The edit-distance budget that still counts as "the same word" for a token of this length: exact for very
+	 * short tokens (so 2-3 letter aliases like "pp"/"dd" are never fuzzy-matched to something else), one typo for
+	 * normal words, two for long class names.
+	 */
+	public static int fuzzyBudget(int tokenLength)
+	{
+		if (tokenLength <= 3)
+		{
+			return 0;
+		}
+		if (tokenLength <= 7)
+		{
+			return 1;
+		}
+		return 2;
+	}
+
+	/** @return the smallest edit distance from {@code token} to any candidate, or {@link Integer#MAX_VALUE} if none. */
+	public static int minDistance(String token, Iterable<String> candidates)
+	{
+		int best = Integer.MAX_VALUE;
+		if (candidates != null)
+		{
+			for (String c : candidates)
+			{
+				final int d = editDistance(token, c);
+				if (d < best)
+				{
+					best = d;
+				}
+			}
+		}
+		return best;
+	}
+
+	/**
+	 * The single closest candidate to {@code token}, if it is within {@code maxDistance} AND unambiguous - a lone
+	 * best. A tie between two different candidates returns {@code null} so the caller asks rather than guessing the
+	 * wrong class.
+	 * @return the closest candidate, or {@code null} if none is within budget or the best is a tie
+	 */
+	public static String nearestWithin(String token, Iterable<String> candidates, int maxDistance)
+	{
+		if ((token == null) || (candidates == null) || (maxDistance < 0))
+		{
+			return null;
+		}
+		String best = null;
+		int bestDist = Integer.MAX_VALUE;
+		boolean tie = false;
+		for (String c : candidates)
+		{
+			final int d = editDistance(token, c);
+			if (d < bestDist)
+			{
+				bestDist = d;
+				best = c;
+				tie = false;
+			}
+			else if ((d == bestDist) && !c.equals(best))
+			{
+				tie = true;
+			}
+		}
+		return ((best == null) || (bestDist > maxDistance) || tie) ? null : best;
 	}
 
 	/**

@@ -124,13 +124,24 @@ public class PhantomBuddyManager implements IXmlReader
 	private static final Pattern ANY_TAG = Pattern.compile("\\[\\[[^\\]]*[\\]\\)]{1,2}");
 	private static final Pattern HTML_TAG = Pattern.compile("</?\\s*[a-zA-Z][a-zA-Z0-9]*\\s*/?>");
 
-	// Heal skills a buddy may know, best (highest id here = strongest) first.
+	// Resurrection (1016): a buddy that naturally learned it (an Elven Elder / Prophet at level >= 20) can raise a
+	// fallen party member - the owner first. Claims go through the shared PhantomBuffs registry so a buddy and the
+	// recruited-party rezzers never both cast on the same corpse.
+	private static final int RES_SKILL_ID = 1016;
+	private static final int RES_CLAIM_MS = 4500; // hold a corpse claim long enough for the cast/revive-request to land
+
+	// Heal skills a buddy may know, in PREFERENCE order (bestHeal picks the first it can cast). Greater Battle Heal
+	// leads because cast SPEED is what makes a Bishop's healing (2s vs 5s) - the buddy heals reactively, so a fast
+	// heal beats a bigger slow one. Major Heal sits below the fast heals as the MP-cheap big-heal fallback (it heals
+	// as much as Greater Battle Heal for less than half the MP, at +1 Spirit Ore), so a high-level buddy still reaches
+	// it when low on MP without ever preferring a slow cast under fire.
 	private static final int[] HEAL_PRIORITY =
 	{
-		1218, // Greater Battle Heal
-		1217, // Greater Heal
-		1015, // Battle Heal
-		1011 // Heal
+		1218, // Greater Battle Heal (2s cast) - primary
+		1015, // Battle Heal (2s cast) - fast, cheap
+		1401, // Major Heal (56+, +1 Spirit Ore) - big, MP-cheap fallback
+		1217, // Greater Heal (5s cast, +HP-regen HoT)
+		1011 // Heal (5s cast)
 	};
 
 	/** Per-buddy state. */
@@ -142,7 +153,8 @@ public class PhantomBuddyManager implements IXmlReader
 		long graceUntil; // 0 unless the owner is offline / said brb; despawn when exceeded
 		long lastMpWarn;
 		List<Skill> buffs; // beneficial buffs to maintain (lazy)
-		Skill heal; // best heal it knows (lazy)
+		List<Skill> healKit; // all known heals, strongest first (lazy); bestHeal() picks the strongest affordable
+		boolean healKitLookedUp;
 		Location pendingDestination; // a place the buddy proposed; teleports only once the owner confirms
 		String pendingDestName;
 		long nextChatter; // when the buddy may next open small talk in party chat (0 = not scheduled)
@@ -467,6 +479,22 @@ public class PhantomBuddyManager implements IXmlReader
 			else
 			{
 				deliver(state, owner, party, "party me first :)");
+			}
+			return null;
+		}
+
+		// Res on demand: the buddy raises a fallen party member automatically (see the res step in serveOwner), so
+		// here it only acknowledges - and only promises a rez when it actually knows Resurrection (an Elder/Prophet
+		// at level >= 20), never when it's too low or a class that can't res.
+		if (containsAny(text, "res", "resurrect", "ress", "revive", "rez"))
+		{
+			if (!isPartiedWith(state, owner))
+			{
+				deliver(state, owner, party, "party me first :)");
+			}
+			else
+			{
+				deliver(state, owner, party, (buddy.getKnownSkill(RES_SKILL_ID) != null) ? "rezzing" : "i can't res, sorry");
 			}
 			return null;
 		}
@@ -1033,6 +1061,30 @@ public class PhantomBuddyManager implements IXmlReader
 
 		final boolean ownerInRange = buddy.calculateDistance2D(owner) <= SUPPORT_RANGE;
 
+		// 0) Raise the fallen. If a party member is dead within range and this buddy naturally learned Resurrection
+		// (an Elven Elder / Prophet at level >= 20), raise it - the owner first, since a dead human is who the buddy
+		// exists to protect. This runs even while the owner is dead (a corpse can't be healed/buffed), and is claimed
+		// through the shared registry so the buddy and the recruited-party rezzers never both cast on one corpse; a
+		// corpse already being raised (isReviveRequested) is skipped inside findResTarget.
+		final Skill res = buddy.getKnownSkill(RES_SKILL_ID);
+		if ((res != null) && !buddy.isSkillDisabled(res) && (buddy.getCurrentMp() >= res.getMpConsume()))
+		{
+			final Player corpse = findResTarget(buddy, owner, now);
+			if (corpse != null)
+			{
+				if (!readyToCast(buddy))
+				{
+					return true; // stand up first; res next tick
+				}
+				if (PhantomBuffs.claimRes(corpse.getObjectId(), buddy.getObjectId(), RES_CLAIM_MS))
+				{
+					buddy.setTarget(corpse);
+					buddy.doCast(res);
+				}
+				return true; // acted (or deferred to another rezzer's claim) this tick
+			}
+		}
+
 		// On-demand specific buff ("give me X" / "greater might on <name>"): cast it on the requested target (the
 		// owner, or a named party member), honoured even if that target's archetype would normally skip it.
 		if (state.pendingBuff != null)
@@ -1222,13 +1274,27 @@ public class PhantomBuddyManager implements IXmlReader
 			{
 				continue;
 			}
-			final BuffInfo info = target.getEffectList().getBuffInfoBySkillId(buff.getId());
-			if ((info == null) || (info.getTime() <= BUFF_REFRESH_SECONDS))
+			// Presence keys on the abnormal SLOT + LEVEL, not the skill id - see PhantomBuffs.needsBuff. This stops a
+			// buddy looping on a buff it cannot land: a shared slot already held by another buffer's skill, or a
+			// STRONGER effect (a P.Atk herb over a low-level Might) the engine would reject our cast over. A weaker
+			// occupant is upgraded; an equal one is refreshed near expiry. Chant of Life is exempt - it is the
+			// HP-gated HoT keyed on its own id (the HP gate just above already decided it is wanted).
+			final boolean need = (buff.getId() == CHANT_OF_LIFE_ID) //
+				? isExpiringById(target, buff.getId()) //
+				: PhantomBuffs.needsBuff(target, buff, BUFF_REFRESH_SECONDS);
+			if (need)
 			{
 				return buff;
 			}
 		}
 		return null;
+	}
+
+	/** Chant of Life is keyed on its own id (an HP-gated HoT): {@code true} if it is missing or about to expire. */
+	private static boolean isExpiringById(Player target, int skillId)
+	{
+		final BuffInfo info = target.getEffectList().getBuffInfoBySkillId(skillId);
+		return (info == null) || (info.getTime() <= BUFF_REFRESH_SECONDS);
 	}
 
 	/**
@@ -1346,6 +1412,37 @@ public class PhantomBuddyManager implements IXmlReader
 	}
 
 	/**
+	 * A fallen party member this buddy should raise, within support range: the owner first (a dead human is who the
+	 * buddy exists to protect), then any other dead party member. Skips a corpse already standing back up
+	 * ({@code isReviveRequested}) or one another rezzer has claimed this tick, so the buddy and the recruited-party
+	 * healers spread out instead of all piling onto one body.
+	 */
+	private Player findResTarget(Player buddy, Player owner, long now)
+	{
+		if (owner.isDead() && !owner.isReviveRequested() && (buddy.calculateDistance2D(owner) <= SUPPORT_RANGE) //
+			&& !PhantomBuffs.isResClaimed(owner.getObjectId(), buddy.getObjectId(), now))
+		{
+			return owner; // a fallen owner - top priority
+		}
+		final Party party = owner.getParty();
+		if (party == null)
+		{
+			return null;
+		}
+		for (Player member : party.getMembers())
+		{
+			if ((member == buddy) || (member == owner) || !member.isDead() || member.isReviveRequested() //
+				|| (buddy.calculateDistance2D(member) > SUPPORT_RANGE) //
+				|| PhantomBuffs.isResClaimed(member.getObjectId(), buddy.getObjectId(), now))
+			{
+				continue;
+			}
+			return member; // a fallen party member the recruited-party rezzers haven't claimed
+		}
+		return null;
+	}
+
+	/**
 	 * Gate a cast behind standing up. standUp() is a ~2.5s animation and a resting buddy is paralyzed while
 	 * seated, so a spell fired in the same tick would silently fail.
 	 * @return {@code true} if the buddy is already standing and may cast now; {@code false} if it just began
@@ -1448,21 +1545,31 @@ public class PhantomBuddyManager implements IXmlReader
 		return state.buffs;
 	}
 
+	/** The strongest heal the buddy can actually cast right now - MP covered and any item reagent (Spirit Ore for Major Heal) in stock; walks down to a cheaper/free heal when the top one is unaffordable. */
 	private Skill bestHeal(Buddy state, Player buddy)
 	{
-		if (state.heal == null)
+		if (!state.healKitLookedUp)
 		{
+			state.healKitLookedUp = true;
+			final List<Skill> list = new ArrayList<>();
 			for (int id : HEAL_PRIORITY)
 			{
 				final Skill known = buddy.getKnownSkill(id);
 				if (known != null)
 				{
-					state.heal = known;
-					break;
+					list.add(known);
 				}
 			}
+			state.healKit = list;
 		}
-		return state.heal;
+		for (Skill s : state.healKit)
+		{
+			if (!buddy.isSkillDisabled(s) && (buddy.getCurrentMp() >= s.getMpConsume()) && PhantomBuffs.canAffordReagent(buddy, s))
+			{
+				return s;
+			}
+		}
+		return null;
 	}
 
 	private static boolean isHealSkill(int id)
