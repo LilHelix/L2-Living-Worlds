@@ -20,6 +20,7 @@ $LauncherDir = Split-Path -Parent $MyInvocation.MyCommand.Path      # dist\launc
 $DistDir     = Split-Path -Parent $LauncherDir                       # dist
 $IniPath     = Join-Path $LauncherDir 'launcher.ini'
 $MarkerPath  = Join-Path $LauncherDir '.db_installed'
+$ProcessRegistryPath = Join-Path $LauncherDir '.processes.json'
 
 function Write-Head($t) { Write-Host ""; Write-Host "==== $t ====" -ForegroundColor Cyan }
 function Write-Ok($t)   { Write-Host "  [ OK ] $t" -ForegroundColor Green }
@@ -48,6 +49,53 @@ function Get-Ini($ini, $sec, $key, $default = '') {
     return $default
 }
 function Is-True($v) { return @('true','1','yes','on') -contains ("$v").ToLower() }
+
+# ---- launcher-owned process registry --------------------------------------
+# Stop-Server uses this registry to terminate only processes created by this
+# launcher. PID alone is not sufficient because Windows can reuse it, so each
+# record also carries the process start time, image name, and command marker.
+$script:LaunchedProcesses = @()
+
+function Save-ProcessRegistry {
+    $tmp = "$ProcessRegistryPath.tmp"
+    ConvertTo-Json -InputObject @($script:LaunchedProcesses) -Depth 3 |
+        Set-Content -Path $tmp -Encoding UTF8
+    Move-Item -Path $tmp -Destination $ProcessRegistryPath -Force
+}
+
+function Register-LaunchedProcess($role, $process, $marker) {
+    Start-Sleep -Milliseconds 100
+    $process.Refresh()
+    if ($process.HasExited) { Fail "$role exited immediately after launch." }
+    $script:LaunchedProcesses += [pscustomobject]@{
+        Role        = $role
+        Id          = $process.Id
+        StartTicks  = "$($process.StartTime.ToUniversalTime().Ticks)"
+        ProcessName = $process.ProcessName
+        Marker      = $marker
+    }
+    Save-ProcessRegistry
+}
+
+function Assert-NoManagedProcesses {
+    if (-not (Test-Path $ProcessRegistryPath)) { return }
+    try {
+        $records = @(Get-Content -Raw $ProcessRegistryPath | ConvertFrom-Json)
+    } catch {
+        Fail "Process registry is unreadable: $ProcessRegistryPath. Inspect or remove it before starting."
+    }
+    foreach ($record in $records) {
+        $existing = Get-Process -Id ([int]$record.Id) -ErrorAction SilentlyContinue
+        if ($existing) {
+            try { $ticks = "$($existing.StartTime.ToUniversalTime().Ticks)" } catch { $ticks = '' }
+            if (($ticks -eq "$($record.StartTicks)") -and
+                ($existing.ProcessName -eq "$($record.ProcessName)")) {
+                Fail "$($record.Role) is already running (PID $($record.Id)). Use Stop-Server.bat first."
+            }
+        }
+    }
+    Remove-Item $ProcessRegistryPath -Force
+}
 
 # ---- helpers ---------------------------------------------------------------
 function Test-Port($p) {
@@ -108,6 +156,8 @@ $autoMysql = Is-True (Get-Ini $ini 'database' 'AutoStartMysql' 'true')
 $startLogin= Is-True (Get-Ini $ini 'servers'  'StartLogin' 'true')
 $startGame = Is-True (Get-Ini $ini 'servers'  'StartGame'  'true')
 $startBrain= Is-True (Get-Ini $ini 'servers'  'StartBrain' 'false')
+
+Assert-NoManagedProcesses
 
 # Resolve relative MysqlBin / DataDir against dist\ so the bundled pack is portable.
 function Resolve-Rel($p) {
@@ -280,8 +330,9 @@ function Start-JavaServer($name, $workDir, $jarRelative) {
     if (Test-Path $cfgPath) { $params = (Get-Content -Raw $cfgPath).Trim() }
     $argLine = "$params -jar `"$jarRelative`""
     Write-Info "launching $name ..."
-    Start-Process -FilePath $java -ArgumentList $argLine -WorkingDirectory $workDir | Out-Null
-    Write-Ok "$name started"
+    $serverProcess = Start-Process -FilePath $java -ArgumentList $argLine -WorkingDirectory $workDir -PassThru
+    Register-LaunchedProcess $name $serverProcess ([System.IO.Path]::GetFileName($jarPath))
+    Write-Ok "$name started (PID $($serverProcess.Id))"
 }
 
 if ($startLogin) {
@@ -296,8 +347,9 @@ if ($startBrain) {
     $brainBat = Join-Path (Split-Path -Parent $DistDir) 'setup_brain.bat'
     if (Test-Path $brainBat) {
         Write-Info "launching FPC brain ..."
-        Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `"$brainBat`"" | Out-Null
-        Write-Ok "brain started"
+        $brainProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `"$brainBat`"" -PassThru
+        Register-LaunchedProcess 'FPC Brain' $brainProcess ([System.IO.Path]::GetFileName($brainBat))
+        Write-Ok "brain started (PID $($brainProcess.Id))"
     } else {
         Write-Info "StartBrain=true but setup_brain.bat not found next to dist\ - skipping"
     }

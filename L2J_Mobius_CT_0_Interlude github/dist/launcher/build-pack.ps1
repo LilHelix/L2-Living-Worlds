@@ -218,6 +218,19 @@ if (Test-Path $adminSrc) {
     Ok "config control panel bundled (open tools\l2admin\index.html in a browser)"
 }
 
+# ---- 6e. bundle the playstyle validator into pack\tools --------------------
+# Ships with the pack so anyone editing game\data\PhantomPlaystyles.xml can check their work
+# (skill ids, names, conditions, per-level coverage) before restarting. Needs Python 3; in game
+# "//phantom playstyle check" reports parse problems without it.
+$playstyleValidator = Join-Path $ProjectRoot 'research\validate_playstyles.py'
+if (Test-Path $playstyleValidator) {
+    Info "bundling the playstyle validator into pack\tools ..."
+    $toolsDir = Join-Path $Pack 'tools'
+    New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+    Copy-Item $playstyleValidator (Join-Path $toolsDir 'validate_playstyles.py') -Force
+    Ok "playstyle validator bundled (python tools\validate_playstyles.py)"
+}
+
 # ---- 7. zip it -------------------------------------------------------------
 $outZip = Join-Path $OutDir 'L2J-Offline-OneClick.zip'
 if (Test-Path $outZip) { Remove-Item $outZip -Force }

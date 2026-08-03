@@ -971,15 +971,54 @@ public class FakePlayerChatManager implements IXmlReader
 		{
 			return recruits;
 		}
+		// The brain answers with bare role words, so any race the player asked for ("lf dwarf dd") survives only in
+		// the ORIGINAL text - carry it across or the request silently loses its race and spawns the wrong one.
+		final Race race = soleRaceIn(text);
 		for (String token : reply.toLowerCase().split("[^a-z]+"))
 		{
-			final PartyRole role = PartyRole.fromToken(token);
-			if ((role != null) && (recruits.size() < 8))
+			if (recruits.size() >= 8)
 			{
-				recruits.add(new Recruit(role, 0));
+				break;
+			}
+			// Same rule as the deterministic path (Trello #11): a generic "dd" is re-rolled FRESH per slot, so a
+			// bulk call fills with a varied mix. Resolving it once through fromToken would pick ONE random
+			// archetype for every slot - and would ignore the race, which is how "dwarf dd" produced an archer.
+			if (isGenericDd(token))
+			{
+				final Recruit dd = PhantomManager.rollDpsRecruit(((race != null) && (PhantomManager.randomDpsForRace(race) != null)) ? race : null);
+				if (dd != null)
+				{
+					recruits.add(dd);
+				}
+				continue;
+			}
+			final PartyRole role = PartyRole.fromToken(token);
+			if (role != null)
+			{
+				// Honour the race only where that archetype actually exists for it (no orc archers).
+				recruits.add(((race != null) && PhantomManager.comboExists(race, role)) ? new Recruit(role, 0, race) : new Recruit(role, 0));
 			}
 		}
 		return recruits;
+	}
+
+	/** The one race adjective in a free-form party call ("lf dwarf dd"), or {@code null} if there is none or several. */
+	private static Race soleRaceIn(String text)
+	{
+		Race found = null;
+		for (String word : text.toLowerCase().split("[^a-z]+"))
+		{
+			final Race race = raceFromToken(word);
+			if (race != null)
+			{
+				if ((found != null) && (found != race))
+				{
+					return null; // a mixed-race call - don't guess one for everybody
+				}
+				found = race;
+			}
+		}
+		return found;
 	}
 
 	/**

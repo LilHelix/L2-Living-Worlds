@@ -27,3 +27,11 @@ game/data/html/admin/rates.htm
 game/data/scripts/handlers/chat/commands/admin/AdminRates.java
 brain/fpc_brain.py
 tools/l2admin/index.html
+game/data/PhantomPlaystyles.xml
+game/data/xsd/PhantomPlaystyles.xsd
+game/data/scripts/handlers/chat/commands/admin/AdminPhantom.java
+game/data/skill icons
+images
+Stop-Server.bat
+launcher/launcher.ps1
+launcher/stop.ps1

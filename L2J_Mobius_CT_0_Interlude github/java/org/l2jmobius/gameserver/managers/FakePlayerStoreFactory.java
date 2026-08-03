@@ -91,9 +91,12 @@ public class FakePlayerStoreFactory
 	private static final int ANCIENT_ADENA_BUY_STOCK_MIN = 5000;
 	private static final int ANCIENT_ADENA_BUY_STOCK_MAX = 50000;
 
-	// Percent of normal SELL shops that should also carry combat shots.
-	// 30% keeps shots reliably available in every town without every other private store being a shot stall.
+	// Small towns keep shots readily available, while full-stock market hubs devote far fewer stalls to them.
+	// Hubs instead reserve a large share for dedicated material sellers, so their much larger populations expose
+	// a broad crafting market rather than repeating the same two shot lines.
 	private static final int SHOT_SELLER_CHANCE = 30;
+	private static final int HUB_SHOT_SELLER_CHANCE = 12;
+	private static final int HUB_MATERIAL_SELLER_CHANCE = 45;
 	private static final int SHOT_STACK_MIN = 5000;
 	private static final int SHOT_STACK_MAX = 25000;
 
@@ -106,6 +109,7 @@ public class FakePlayerStoreFactory
 	private static volatile boolean _built = false;
 	private static final EnumMap<CrystalType, List<ItemTemplate>> EQUIP = new EnumMap<>(CrystalType.class);
 	private static final EnumMap<CrystalType, List<ItemTemplate>> BULK = new EnumMap<>(CrystalType.class);
+	private static final EnumMap<CrystalType, List<ItemTemplate>> MATERIALS = new EnumMap<>(CrystalType.class);
 	private static final EnumMap<CrystalType, List<RecipeList>> RECIPES = new EnumMap<>(CrystalType.class);
 
 	private FakePlayerStoreFactory()
@@ -132,6 +136,7 @@ public class FakePlayerStoreFactory
 			{
 				EQUIP.put(grade, new ArrayList<>());
 				BULK.put(grade, new ArrayList<>());
+				MATERIALS.put(grade, new ArrayList<>());
 				RECIPES.put(grade, new ArrayList<>());
 			}
 			for (ItemTemplate item : ItemData.getInstance().getAllItems())
@@ -141,6 +146,10 @@ public class FakePlayerStoreFactory
 					continue;
 				}
 				if ((item.getId() == ADENA_ID) || (item.getId() == ANCIENT_ADENA_ID))
+				{
+					continue;
+				}
+				if (!FakePlayerStoreEligibility.isAllowed(item.getId()))
 				{
 					continue;
 				}
@@ -173,8 +182,13 @@ public class FakePlayerStoreFactory
 						continue;
 					}
 					// Bucket the remaining consumables/mats by their crystal grade (gradeless mats fall into NONE and
-					// stay available to every town).
+					// stay available to every town). Keep a material-only index as well so market hubs can create
+					// recognizable crafting-supply stalls instead of hoping the broad bulk lottery finds materials.
 					BULK.get(item.getCrystalType()).add(item);
+					if (item.getItemType() == EtcItemType.MATERIAL)
+					{
+						MATERIALS.get(item.getCrystalType()).add(item);
+					}
 				}
 			}
 			// Recipes are bucketed by the grade of the item they produce, so crafters honour the same
@@ -310,18 +324,17 @@ public class FakePlayerStoreFactory
 		return pickGraded(BULK, maxOrdinal);
 	}
 
-	/**
-	 * Adds a reliable shot pair to some SELL stores.
-	 * Regular towns use the vendor's grade cap.
-	 * Full-stock hubs randomize D/C/B/A so the hub market naturally covers all common shot grades.
-	 */
-	private static void maybeAddShotStock(List<FakePlayerStoreItem> stock, Set<Integer> seen, int cap, boolean fullStock)
+	private static ItemTemplate pickMaterial(int maxOrdinal)
 	{
-		if (Rnd.get(100) >= SHOT_SELLER_CHANCE)
-		{
-			return;
-		}
+		return pickGraded(MATERIALS, maxOrdinal);
+	}
 
+	/**
+	 * Adds a reliable shot pair to a SELL store selected as a shot stall.
+	 * Regular towns use the vendor's grade cap; full-stock hubs randomize D/C/B/A/S.
+	 */
+	private static void addShotStock(List<FakePlayerStoreItem> stock, Set<Integer> seen, int cap, boolean fullStock)
+	{
 		final CrystalType grade = fullStock ? randomShotGrade(cap) : shotGradeForCap(cap);
 		addShotLine(stock, seen, "Soulshot " + shotGradeLetter(grade));
 		addShotLine(stock, seen, "Blessed Spiritshot " + shotGradeLetter(grade));
@@ -415,7 +428,7 @@ public class FakePlayerStoreFactory
 		int bestScore = Integer.MAX_VALUE;
 		for (ItemTemplate item : ItemData.getInstance().getAllItems())
 		{
-			if ((item == null) || (item.getId() == ADENA_ID) || (item.getId() == ANCIENT_ADENA_ID))
+			if ((item == null) || (item.getId() == ADENA_ID) || (item.getId() == ANCIENT_ADENA_ID) || !FakePlayerStoreEligibility.isAllowed(item.getId()))
 			{
 				continue;
 			}
@@ -478,7 +491,7 @@ public class FakePlayerStoreFactory
 	{
 		final List<FakePlayerStoreItem> stock = new ArrayList<>();
 		final ItemTemplate item = ItemData.getInstance().getTemplate(itemId);
-		if (item != null)
+		if ((item != null) && FakePlayerStoreEligibility.isAllowed(itemId))
 		{
 			final int fallbackCount = item.isStackable() ? bulkAmount(item.getReferencePrice()) : 1;
 			final int count = normalizedDealCount(item, requestedCount, fallbackCount);
@@ -519,7 +532,7 @@ public class FakePlayerStoreFactory
 	{
 		final List<FakePlayerStoreItem> stock = new ArrayList<>();
 		final ItemTemplate item = ItemData.getInstance().getTemplate(itemId);
-		if (item != null)
+		if ((item != null) && FakePlayerStoreEligibility.isAllowed(itemId))
 		{
 			final int fallbackCount = item.isStackable() ? bulkAmount(item.getReferencePrice()) : Rnd.get(1, 3);
 			final int count = normalizedDealCount(item, requestedCount, fallbackCount);
@@ -594,15 +607,22 @@ public class FakePlayerStoreFactory
 		final List<FakePlayerStoreItem> stock = new ArrayList<>();
 		final Set<Integer> seen = new HashSet<>();
 
-		// Reliability pass: some SELL shops always carry a grade-appropriate soulshot + blessed spiritshot pair.
-		// This is intentionally done before the normal random stock so the rest of the shop still looks organic.
-		maybeAddShotStock(stock, seen, cap, fullStock);
+		// Full-stock hubs use recognizable stall archetypes. Shot stalls are deliberately scarce; material
+		// stalls carry several distinct crafting supplies and advertise them naturally because they contain no
+		// unrelated equipment. Smaller towns retain the higher shot chance that keeps leveling supplies handy.
+		final int sellerRoll = Rnd.get(100);
+		final boolean shotSeller = sellerRoll < (fullStock ? HUB_SHOT_SELLER_CHANCE : SHOT_SELLER_CHANCE);
+		final boolean materialSeller = fullStock && !shotSeller && (sellerRoll < (HUB_SHOT_SELLER_CHANCE + HUB_MATERIAL_SELLER_CHANCE));
+		if (shotSeller)
+		{
+			addShotStock(stock, seen, cap, fullStock);
+		}
 
 		final int lines = Rnd.get(2, 5);
 		for (int i = 0; i < lines; i++)
 		{
-			final boolean bulk = Rnd.get(100) < 55;
-			final ItemTemplate item = bulk ? pickBulk(cap) : pickEquip(cap);
+			final boolean bulk = materialSeller || (Rnd.get(100) < 55);
+			final ItemTemplate item = materialSeller ? pickMaterial(cap) : (bulk ? pickBulk(cap) : pickEquip(cap));
 			if ((item == null) || !seen.add(item.getId()))
 			{
 				continue;

@@ -72,9 +72,26 @@ public class FakePlayerGearFilter
 	};
 
 	private static volatile Set<Integer> _allowed = null;
+	private static volatile int _version = 0;
 
 	private FakePlayerGearFilter()
 	{
+	}
+
+	/**
+	 * Invalidates the allow-list after {@link BuyListData} finishes loading. Dependent gear caches compare
+	 * {@link #getVersion()} before use and rebuild lazily when this version changes.
+	 */
+	public static synchronized void onBuyListsReloaded()
+	{
+		_allowed = null;
+		_version++;
+	}
+
+	/** @return the current allow-list generation used by dependent caches. */
+	public static int getVersion()
+	{
+		return _version;
 	}
 
 	private static Set<Integer> allowed()
