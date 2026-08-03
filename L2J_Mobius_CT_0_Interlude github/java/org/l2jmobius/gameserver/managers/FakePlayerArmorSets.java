@@ -70,6 +70,7 @@ public class FakePlayerArmorSets
 	// family (LIGHT/HEAVY/MAGIC) -> grade -> matching outfits.
 	private static final EnumMap<ArmorType, EnumMap<CrystalType, List<Outfit>>> SETS = new EnumMap<>(ArmorType.class);
 	private static volatile boolean _built = false;
+	private static volatile int _builtVersion = -1;
 
 	private FakePlayerArmorSets()
 	{
@@ -93,10 +94,14 @@ public class FakePlayerArmorSets
 
 	private static synchronized void build()
 	{
-		if (_built)
+		final int version = FakePlayerGearFilter.getVersion();
+		if (_built && (_builtVersion == version))
 		{
 			return;
 		}
+		SETS.clear();
+		_built = false;
+		_builtVersion = -1;
 		for (ArmorType family : new ArmorType[]
 		{
 			ArmorType.LIGHT,
@@ -140,6 +145,7 @@ public class FakePlayerArmorSets
 		}
 		if (built > 0) // only cache once real data is present (guards against a call before ArmorSetData/BuyListData load)
 		{
+			_builtVersion = version;
 			_built = true;
 		}
 	}

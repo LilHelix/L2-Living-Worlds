@@ -170,6 +170,123 @@
   .hidden{display:none !important}
   .muted{color:var(--stone)}
   code.inl{font-family:var(--mono);background:#00000038;padding:1px 6px;border-radius:3px;color:var(--gold-bright);font-size:.92em}
+
+  /* ============================================================
+     Phantom playstyles
+     ============================================================ */
+  .ps-empty{text-align:center;padding:54px 20px;border:1px dashed var(--line-solid);border-radius:8px;background:#ffffff04}
+  .ps-empty h3{font-size:1.15rem;margin-bottom:8px}
+  .ps-empty p{color:var(--stone);font-size:13.5px;max-width:520px;margin:0 auto 18px}
+  .ps-progress{font-family:var(--mono);font-size:12.5px;color:var(--stone)}
+
+  .ps-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .ps-toolbar .spacer{margin-left:auto}
+  .btn-sm{padding:6px 12px;font-size:12px;border-radius:4px;font-weight:600}
+
+  .ps-scrub{display:flex;align-items:center;gap:11px;padding:11px 14px;margin-bottom:16px;
+    border:1px solid var(--line-solid);border-radius:6px;background:var(--panel)}
+  .ps-scrub label{font-size:12.5px;color:var(--stone);white-space:nowrap}
+  .ps-scrub input[type=range]{flex:1;min-width:120px;accent-color:var(--gold);width:auto;padding:0}
+  .ps-scrub .lv{font-family:var(--mono);font-size:14px;color:var(--gold-bright);width:26px;text-align:right}
+  .ps-scrub .hint{font-size:12px;color:var(--stone-dim)}
+
+  .ps-layout{display:grid;grid-template-columns:268px 1fr;gap:20px;align-items:start}
+  @media (max-width:860px){ .ps-layout{grid-template-columns:1fr} }
+
+  .ps-side{border:1px solid var(--line-solid);border-radius:7px;background:var(--panel);
+    max-height:70vh;overflow:auto;position:sticky;top:82px}
+  .ps-item{padding:10px 13px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .12s}
+  .ps-item:last-child{border-bottom:none}
+  .ps-item:hover{background:#ffffff06}
+  .ps-item.sel{background:#c9a24b1a;border-left:3px solid var(--gold);padding-left:10px}
+  .ps-item .nm{font-size:13.5px;font-weight:600;color:var(--ink)}
+  .ps-item .sub{font-size:11px;color:var(--stone-dim);font-family:var(--mono);margin-top:2px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ps-item .warn-dot{display:inline-block;width:6px;height:6px;border-radius:50%;
+    background:var(--warn);margin-left:6px;vertical-align:middle}
+
+  .ps-main{min-width:0}
+  .ps-head{display:flex;gap:12px;align-items:flex-start;margin-bottom:6px;flex-wrap:wrap}
+  .ps-head h3{font-size:1.28rem}
+  .ps-head .sub{font-size:12.5px;color:var(--stone);margin-top:4px}
+  .ps-chip{display:inline-block;font-size:10.5px;font-family:var(--mono);color:var(--ink-soft);
+    border:1px solid var(--line-solid);border-radius:20px;padding:1px 8px;margin:2px 4px 2px 0;background:#ffffff06}
+  .ps-chip.role{color:var(--gold-bright);border-color:var(--gold)}
+
+  .ps-note{display:flex;gap:10px;align-items:flex-start;margin:12px 0;padding:11px 14px;
+    border:1px solid var(--line-solid);border-left:3px solid var(--warn);border-radius:6px;
+    background:var(--panel);font-size:12.5px;color:var(--ink-soft)}
+  .ps-note.bad{border-left-color:var(--ember)}
+  .ps-note.info{border-left-color:var(--gold)}
+  .ps-note b{color:var(--ink)}
+  .ps-note ul{margin:6px 0 0;padding-left:18px}
+  .ps-note li{margin:2px 0}
+
+  .ps-rows{border:1px solid var(--line-solid);border-radius:7px;background:var(--panel);overflow:hidden}
+  .ps-row{display:grid;grid-template-columns:26px 34px 1fr auto;gap:12px;align-items:center;
+    padding:11px 13px;border-bottom:1px solid var(--line);background:var(--panel);transition:opacity .15s,background .12s}
+  .ps-row:last-child{border-bottom:none}
+  .ps-row:hover{background:var(--panel-2)}
+  .ps-row.dim{opacity:.36}
+  .ps-row.drag{opacity:.5;background:var(--panel-3)}
+  .ps-row.over{box-shadow:inset 0 2px 0 var(--gold)}
+  .ps-grip{cursor:grab;color:var(--stone-dim);display:flex;align-items:center;justify-content:center;
+    font-size:15px;line-height:1;user-select:none}
+  .ps-grip:active{cursor:grabbing}
+  .ps-row .prio{font-family:var(--mono);font-size:10.5px;color:var(--stone-dim);text-align:center}
+
+  .ps-icon{width:34px;height:34px;border-radius:5px;border:1px solid var(--line-solid);
+    display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;
+    letter-spacing:.04em;text-transform:uppercase;overflow:hidden;flex:none;background:#00000030}
+  .ps-icon img{width:100%;height:100%;object-fit:cover}
+  .u-OPENER  {color:#8fb8d8;border-color:#8fb8d855;background:#8fb8d818}
+  .u-ROTATION{color:#d8c98f;border-color:#d8c98f55;background:#d8c98f18}
+  .u-AOE     {color:#d89a6a;border-color:#d89a6a55;background:#d89a6a18}
+  .u-DEBUFF  {color:#b79ad8;border-color:#b79ad855;background:#b79ad818}
+  .u-CONTROL {color:#7fc4b0;border-color:#7fc4b055;background:#7fc4b018}
+  .u-PANIC   {color:#d88a8a;border-color:#d88a8a55;background:#d88a8a18}
+  .u-LIMIT   {color:#c98ad8;border-color:#c98ad855;background:#c98ad818}
+
+  .ps-body{min-width:0}
+  .ps-name{font-size:14px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .ps-name .id{font-family:var(--mono);font-size:10.5px;color:var(--stone-dim);font-weight:400}
+  .ps-when{font-size:12.5px;color:var(--stone);margin-top:2px}
+  .ps-mech{font-family:var(--mono);font-size:11px;color:var(--stone-dim);margin-top:3px}
+  .ps-flag{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;
+    color:var(--warn);border:1px solid var(--warn);padding:1px 6px;border-radius:20px}
+  .ps-flag.bad{color:var(--ember);border-color:var(--ember)}
+  .ps-acts{display:flex;gap:5px;align-items:center}
+  .ps-x{width:27px;height:27px;border-radius:4px;border:1px solid var(--line-solid);background:#ffffff06;
+    color:var(--stone);font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center}
+  .ps-x:hover{color:var(--gold-bright);border-color:var(--gold)}
+  .ps-x.del:hover{color:var(--ember);border-color:var(--ember)}
+
+  /* row editor */
+  .ps-edit{grid-column:1/-1;border-top:1px dashed var(--line-solid);margin-top:11px;padding-top:13px}
+  .ps-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:12px 16px}
+  .ps-f label{display:block;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--stone);margin-bottom:4px}
+  .ps-f input,.ps-f select{width:100%;text-align:left}
+  .ps-conds{display:flex;flex-wrap:wrap;gap:7px;margin-top:4px}
+  .ps-cond{font-size:11.5px;font-family:var(--mono);padding:4px 9px;border-radius:20px;
+    border:1px solid var(--line-solid);color:var(--stone);background:#ffffff06;cursor:pointer;transition:all .12s}
+  .ps-cond:hover{border-color:var(--gold);color:var(--ink-soft)}
+  .ps-cond.on{color:#160f04;background:linear-gradient(180deg,var(--gold-bright),var(--gold));border-color:#d8b862}
+
+  /* modal */
+  .ps-mask{position:fixed;inset:0;z-index:70;background:#000000b0;backdrop-filter:blur(3px);
+    display:flex;align-items:center;justify-content:center;padding:24px}
+  .ps-modal{background:var(--panel);border:1px solid var(--line-solid);border-radius:9px;
+    width:min(660px,100%);max-height:86vh;display:flex;flex-direction:column;box-shadow:0 24px 70px #000000cc}
+  .ps-modal h3{padding:17px 20px 0;font-size:1.15rem}
+  .ps-modal .mbody{padding:14px 20px;overflow:auto;flex:1}
+  .ps-modal .mfoot{padding:13px 20px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end}
+  .ps-modal input[type=text],.ps-modal input[type=search]{width:100%;text-align:left}
+  .ps-pick{padding:9px 11px;border-bottom:1px solid var(--line);cursor:pointer;display:flex;gap:11px;align-items:center}
+  .ps-pick:hover{background:var(--panel-2)}
+  .ps-pick.off{opacity:.42;cursor:not-allowed}
+  .ps-pick .lv{font-family:var(--mono);font-size:11px;color:var(--stone-dim);margin-left:auto;white-space:nowrap}
+  .ps-classes{display:flex;flex-wrap:wrap;gap:6px;max-height:210px;overflow:auto;padding:4px 2px}
 </style>
 </head>
 <body>
@@ -302,15 +419,7 @@ const PANELS = [
       {key:"ShortRange",       label:"Short target range", type:"int", help:"Melee auto-target radius (default 600)."},
       {key:"LongRange",        label:"Long target range",  type:"int", help:"Ranged auto-target radius (default 1400)."},
     ]},
-  { id:"prem", title:"Premium", file:"PremiumSystem.ini",
-    blurb:"Optional premium-account bonuses.",
-    fields:[
-      {key:"EnablePremiumSystem", label:"Enable premium system", type:"bool", help:"Turn the premium bonuses on."},
-      {key:"PremiumRateXp",   label:"Premium XP rate",   type:"float", help:"Extra XP multiplier for premium accounts."},
-      {key:"PremiumRateSp",   label:"Premium SP rate",   type:"float", help:"Extra SP multiplier for premium accounts."},
-      {key:"PremiumRateDropAmount", label:"Premium drop amount", type:"float", help:"Extra drop-amount multiplier."},
-      {key:"PremiumRateDropChance", label:"Premium drop chance", type:"float", help:"Extra drop-chance multiplier."},
-    ]},
+  
 ];
 
 /* ============================================================
@@ -555,6 +664,15 @@ function buildTabs(){
     panels.appendChild(buildCuratedPanel(p, i === 0));
   });
 
+  // Phantom playstyles tab (always) - it reads game/data, not the config folder, so it is offered
+  // even when no .ini panel applies. The data folder is picked lazily, on first open.
+  const pt = document.createElement("button");
+  pt.className = "tab"; pt.dataset.tab = "__ps";
+  pt.innerHTML = 'Phantom Playstyles<span class="dot"></span>';
+  pt.onclick = () => { switchTab("__ps"); psRender(); };
+  tabs.appendChild(pt);
+  panels.appendChild(psBuildPanel());
+
   // Raw editor tab (always).
   const rt = document.createElement("button");
   rt.className = "tab"; rt.dataset.tab = "__raw";
@@ -565,6 +683,7 @@ function buildTabs(){
 
   state.activeTab = available.length ? available[0].id : "__raw";
   if (!available.length) switchTab("__raw");
+  psRender();
 }
 
 function buildCuratedPanel(p, active){
@@ -712,9 +831,11 @@ function dirtyFiles(){ return Object.keys(state.files).filter(n => state.files[n
 
 function refreshDirtyUI(){
   const dirty = dirtyFiles();
+  const psd = psDirty();
   // tab dots
   document.querySelectorAll(".tab").forEach(t => {
     const id = t.dataset.tab;
+    if (id === "__ps"){ t.classList.toggle("dirty", psd); return; }
     if (id === "__raw"){ t.classList.toggle("dirty", dirty.length > 0); return; }
     const panel = PANELS.find(p => p.id === id);
     t.classList.toggle("dirty", panel && state.files[panel.file] && state.files[panel.file].dirty);
@@ -722,10 +843,12 @@ function refreshDirtyUI(){
   // save bar
   const bar = document.getElementById("savebar");
   const msg = document.getElementById("saveMsg");
-  if (dirty.length){
+  const names = dirty.map(n => state.files[n].relPath);
+  if (psd) names.push(PS_FILE);
+  if (names.length){
     bar.classList.add("show");
-    msg.innerHTML = "<b>" + dirty.length + "</b> file" + (dirty.length>1?"s":"") + " with unsaved changes: " +
-      dirty.map(n => escapeHtml(state.files[n].relPath)).join(", ");
+    msg.innerHTML = "<b>" + names.length + "</b> file" + (names.length>1?"s":"") + " with unsaved changes: " +
+      names.map(escapeHtml).join(", ");
   } else {
     bar.classList.remove("show");
   }
@@ -733,7 +856,8 @@ function refreshDirtyUI(){
 
 async function saveAll(){
   const dirty = dirtyFiles();
-  if (!dirty.length) return;
+  const psd = psDirty();
+  if (!dirty.length && !psd) return;
   const btn = document.getElementById("saveBtn");
   btn.disabled = true;
   try{
@@ -747,7 +871,6 @@ async function saveAll(){
         f.original = text.replace(/\r\n/g,"\n");
         f.dirty = false;
       }
-      toast("Saved " + dirty.length + " file" + (dirty.length>1?"s":"") + ". Run //reload config in-game to apply.");
     } else {
       // download each changed file
       for (const name of dirty){
@@ -757,8 +880,15 @@ async function saveAll(){
         f.original = text.replace(/\r\n/g,"\n");
         f.dirty = false;
       }
-      toast("Downloaded changed file(s). Replace them in your config folder, then //reload config.");
     }
+    if (psd) await psSave();
+
+    // The two halves apply with different commands, so say only what's relevant.
+    const parts = [];
+    if (dirty.length) parts.push(dirty.length + " config file" + (dirty.length>1?"s":"") + " (//reload config)");
+    if (psd) parts.push(PS_FILE + " (//phantom playstyle)");
+    toast((state.mode === "fs" ? "Saved " : "Downloaded ") + parts.join(" and ") +
+      (state.mode === "fs" ? "." : " - copy them back over your server files."));
     refreshDirtyUI();
   }catch(err){
     console.error(err);
@@ -769,15 +899,1194 @@ async function saveAll(){
 }
 
 function discardAll(){
-  if (!dirtyFiles().length) return;
+  if (!dirtyFiles().length && !psDirty()) return;
   if (!confirm("Discard all unsaved changes and reload values from disk?")) return;
   Object.values(state.files).forEach(f => {
     const parsed = parseIni(f.original);
     f.lines = parsed.lines; f.keyIndex = parsed.keyIndex; f.dirty = false;
   });
+  if (psState.doc){
+    psState.doc = psParse(psState.original);
+    psState.sel = 0; psState.openRow = -1;
+    psState.learnCache = {};
+  }
   buildTabs();
   refreshDirtyUI();
   toast("Reverted to saved values.");
+}
+
+/* ============================================================
+ * PHANTOM PLAYSTYLES - visual editor for data/PhantomPlaystyles.xml
+ *
+ * The file decides how every recruited phantom fights, and DOCUMENT ORDER IS PRIORITY: the engine
+ * casts the first listed entry whose conditions pass. That ordering is invisible in a text editor,
+ * which is the main reason this panel exists.
+ *
+ * Saving is deliberately line-oriented rather than DOM-based: the file's header and per-lineage
+ * rationale comments are most of its value, and an XMLSerializer round trip throws them away. Every
+ * line keeps its ORIGINAL text and is only re-rendered when actually edited, so an untouched file
+ * round-trips byte for byte (verified on load - see psRoundTripOk).
+ * ============================================================ */
+
+const PS_FILE = "PhantomPlaystyles.xml";
+const ICON_SUBDIR = "skill icons"; // icons ship next to the datapack at game/data/skill icons
+const PS_USES = ["OPENER","ROTATION","AOE","DEBUFF","CONTROL","PANIC","LIMIT"];
+const PS_ROLES = ["TANK","WARRIOR","ARCHER","DAGGER","MONK","SINGER","DANCER","NUKER"];
+
+// Condition -> the numeric attribute it pairs with (null = the condition takes no parameter).
+// The row editor is generated from this map, so an unpaired condition/parameter can't be written.
+const PS_CONDS = {
+  ALWAYS:null, TARGET_HP_BELOW:"hpBelow", TARGET_HP_ABOVE:"hpAbove", SELF_HP_BELOW:"selfHpBelow",
+  MP_ABOVE:"mpAbove", MOBS_NEAR:"mobsAtLeast", MOBS_UNSPOILED:"mobsAtLeast", REAR:null, CHARGES:"chargesAtLeast",
+  CHARGES_BELOW:"chargesBelow", DEBUFF_MISSING:null, SELF_ABNORMAL_FREE:null, NOT_SPOILED:null,
+  DURABLE_TARGET:null, HEALER_READY:null, ONCE_PER_TARGET:null, UNDER_ATTACK:null
+};
+const PS_COND_TEXT = {
+  ALWAYS:"always", TARGET_HP_BELOW:"target below {v}% HP", TARGET_HP_ABOVE:"target above {v}% HP",
+  SELF_HP_BELOW:"below {v}% own HP", MP_ABOVE:"above {v}% own MP", MOBS_NEAR:"{v}+ mobs near",
+  MOBS_UNSPOILED:"{v}+ unspoiled mobs", REAR:"from behind", CHARGES:"{v}+ charges banked", CHARGES_BELOW:"under {v} charges",
+  DEBUFF_MISSING:"its slot is free", SELF_ABNORMAL_FREE:"own slot is free", NOT_SPOILED:"target not spoiled",
+  DURABLE_TARGET:"target is durable", HEALER_READY:"a healer is ready",
+  ONCE_PER_TARGET:"once per target", UNDER_ATTACK:"while under attack"
+};
+
+// Skills the party manager casts with its own threat/survival/CC/support logic. Listing one here
+// would have the playstyle engine fight the manager for it. Mirrors validate_playstyles.py.
+const PS_MANAGER_OWNED = {
+  110:"Ultimate Defense (manager survival logic)", 28:"Aggression (manager threat logic)",
+  18:"Aura of Hate (manager threat logic)", 1069:"Sleep (manager nuker CC)",
+  1201:"Dryad Root (manager nuker CC)", 1016:"Resurrection (manager support logic)"
+};
+
+// House attribute order, matching the hand-written file.
+const PS_ATTR_ORDER = ["id","name","use","when","hpBelow","hpAbove","selfHpBelow","mpAbove",
+  "mobsAtLeast","chargesAtLeast","chargesBelow","minLevel","maxLevel","paceMs"];
+
+// Levels a recruited member realistically exists at (the validator's coverage gate).
+const PS_COVERAGE_LEVELS = [20,30,40,52,62,76];
+
+// Schema version of the cached datapack index. The cache key is a fingerprint of the DATAPACK, so a
+// change to what we extract (or what a field means) would otherwise keep serving a stale shape from
+// IndexedDB forever. BUMP THIS whenever psIndexSkills/psIndexTrees change their output.
+const PS_INDEX_VERSION = 2;
+
+// The engine never calls the playstyle picker for these - supportTick plays the class instead, so a
+// playstyle written for one is dead data. Allowed, but labelled.
+const PS_SUPPORT_CLASSES = new Set([15,16,97, 17,98, 29,30,105, 42,43,112, 51,115, 52,116]);
+// No entry today (servitor control is a later phase), but one WOULD be used by the engine.
+const PS_SUMMONER_CLASSES = new Set([14,96, 28,104, 41,111]);
+
+const psState = {
+  dataDir: null,      // FileSystemDirectoryHandle for game/data
+  rememberedDir: null,// last-used data folder, restored from IndexedDB
+  rememberedOk: false,// ...and its write permission survived the reload (so it can self-open)
+  iconDir: null,      // optional folder of extracted client icons
+  iconFiles: null,    // lowercased basename -> file handle, indexed once when the folder is chosen
+  iconCache: {},      // "skill0056" -> object URL | null
+  fileHandle: null,
+  doc: null,          // parsed line model
+  original: "",       // text as loaded, for dirty + round-trip checks
+  idx: null,          // { skills:{}, trees:{} } datapack index
+  learnCache: {},
+  sel: 0,             // selected playstyle index
+  level: 80,          // level scrubber
+  openRow: -1,        // which row has its editor expanded
+  safe: true,         // round-trip verified -> editing allowed
+  built: false,
+  loading: false
+};
+
+/* ---------- line model: parse ---------- */
+const PS_OPEN_RE  = /^(\s*)<playstyle\b([^>]*)>\s*$/;
+const PS_SKILL_RE = /^(\s*)<skill\b([\s\S]*?)\/>\s*$/;
+const PS_CLOSE_RE = /^(\s*)<\/playstyle>\s*$/;
+
+function psAttrs(s){
+  const out = {};
+  const re = /([A-Za-z_][\w.:-]*)\s*=\s*"([^"]*)"/g;
+  let m; while ((m = re.exec(s))) out[m[1]] = m[2];
+  return out;
+}
+function psEsc(v){ return String(v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;"); }
+
+// Pull the comment block sitting directly above a tag (no blank line between) off the pending raw
+// lines, so it travels with the thing it documents when that thing is moved or deleted.
+function psTakeLead(pending){
+  let k = pending.length;
+  while (k > 0 && pending[k-1].trim() !== "") k--;
+  const run = pending.slice(k);
+  if (run.length && run[0].trim().startsWith("<!--") && run[run.length-1].trim().endsWith("-->")){
+    pending.length = k;
+    return run;
+  }
+  return [];
+}
+
+function psParse(text){
+  const eol = text.indexOf("\r\n") >= 0 ? "\r\n" : "\n";
+  const raw = text.split(/\r?\n/);
+  const doc = { eol, items: [] };
+  const pending = [];
+  const flush = () => { pending.forEach(t => doc.items.push({ t:"raw", text:t })); pending.length = 0; };
+  let cur = null;
+
+  for (const line of raw){
+    let m;
+    if (!cur && (m = PS_OPEN_RE.exec(line))){
+      const lead = psTakeLead(pending);
+      flush();
+      cur = { t:"ps", lead, indent:m[1], openRaw:line, attrs:psAttrs(m[2]),
+              edited:false, entries:[], trail:[], closeRaw:null };
+      continue;
+    }
+    if (cur && (m = PS_SKILL_RE.exec(line))){
+      const lead = psTakeLead(pending);
+      cur.trail.push(...pending); pending.length = 0;
+      cur.entries.push({ lead, indent:m[1], raw:line, attrs:psAttrs(m[2]), edited:false });
+      continue;
+    }
+    if (cur && (m = PS_CLOSE_RE.exec(line))){
+      cur.trail.push(...pending); pending.length = 0;
+      cur.closeRaw = line;
+      doc.items.push(cur);
+      cur = null;
+      continue;
+    }
+    pending.push(line);
+  }
+  if (cur){ cur.trail.push(...pending); pending.length = 0; doc.items.push(cur); } // unclosed - guard will fail
+  flush();
+  return doc;
+}
+
+/* ---------- line model: serialize ---------- */
+function psSkillLine(indent, attrs){
+  const parts = [];
+  PS_ATTR_ORDER.forEach(k => {
+    const v = attrs[k];
+    if (v != null && String(v).trim() !== "") parts.push(k + '="' + psEsc(v) + '"');
+  });
+  Object.keys(attrs).forEach(k => {           // keep anything we don't know about
+    if (PS_ATTR_ORDER.indexOf(k) < 0 && String(attrs[k]).trim() !== "") parts.push(k + '="' + psEsc(attrs[k]) + '"');
+  });
+  return indent + "<skill " + parts.join(" ") + " />";
+}
+function psOpenLine(indent, attrs){
+  const parts = ['name="' + psEsc(attrs.name || "") + '"', 'classIds="' + psEsc(attrs.classIds || "") + '"'];
+  if (attrs.role) parts.push('role="' + psEsc(attrs.role) + '"');
+  return indent + "<playstyle " + parts.join(" ") + ">";
+}
+function psSerialize(doc){
+  const out = [];
+  doc.items.forEach(it => {
+    if (it.t === "raw"){ out.push(it.text); return; }
+    out.push(...it.lead);
+    out.push(it.edited ? psOpenLine(it.indent, it.attrs) : it.openRaw);
+    it.entries.forEach(e => { out.push(...e.lead); out.push(e.edited ? psSkillLine(e.indent, e.attrs) : e.raw); });
+    out.push(...it.trail);
+    out.push(it.closeRaw != null ? it.closeRaw : (it.indent + "</playstyle>"));
+  });
+  return out.join(doc.eol);
+}
+function psList(){ return psState.doc ? psState.doc.items.filter(i => i.t === "ps") : []; }
+function psDirty(){ return !!psState.doc && psSerialize(psState.doc) !== psState.original; }
+
+// The safety gate: if we can't reproduce the file we loaded, we must not be allowed to rewrite it.
+function psRoundTripOk(){
+  return psSerialize(psState.doc) === psState.original;
+}
+
+/* ============================================================
+ * Datapack index (skills + skill trees), cached in IndexedDB
+ * ============================================================ */
+async function psGetDir(dir, ...path){
+  let d = dir;
+  for (const p of path) d = await d.getDirectoryHandle(p);
+  return d;
+}
+
+// Accept game/data, game, or the pack root and walk down to the data folder.
+async function psResolveDataDir(dir){
+  const probe = async (d) => { try{ await d.getFileHandle(PS_FILE); return true; }catch(_){ return false; } };
+  if (await probe(dir)) return dir;
+  for (const hop of [["data"],["game","data"]]){
+    try{
+      const d = await psGetDir(dir, ...hop);
+      if (await probe(d)) return d;
+    }catch(_){}
+  }
+  return null;
+}
+
+function psText(el, tag){
+  const n = el.querySelector(tag);
+  return n ? n.textContent.trim() : null;
+}
+// Resolve "#tableName" against the skill's <table> children; returns [first, last].
+function psTableRange(el, value){
+  if (value == null) return null;
+  if (value.charAt(0) !== "#") return [value, value];
+  const t = Array.from(el.querySelectorAll("table")).find(x => x.getAttribute("name") === value);
+  if (!t) return null;
+  const parts = t.textContent.trim().split(/\s+/);
+  return parts.length ? [parts[0], parts[parts.length-1]] : null;
+}
+
+async function psIndexSkills(dir, onProgress){
+  const skills = {};
+  const files = [];
+  for await (const e of dir.values()) if (e.kind === "file" && e.name.toLowerCase().endsWith(".xml")) files.push(e);
+  files.sort((a,b) => a.name.localeCompare(b.name));
+  let n = 0;
+  for (const entry of files){
+    const text = await (await entry.getFile()).text();
+    const dom = new DOMParser().parseFromString(text, "text/xml");
+    for (const s of dom.querySelectorAll("skill")){
+      const id = parseInt(s.getAttribute("id"), 10);
+      if (!id) continue;
+      // The first "<!-- Level 1: ... -->" child is a ready-made description.
+      let desc = "";
+      for (const c of s.childNodes){
+        if (c.nodeType === 8){ desc = c.nodeValue.replace(/^\s*Level\s+\d+:\s*/i, "").trim(); break; }
+      }
+      const mp = psTableRange(s, psText(s, "mpConsume"));
+      const kinds = Array.from(s.querySelectorAll("conditions using")).map(u => u.getAttribute("kind")).filter(Boolean);
+      // A handful of skills (mastery lines) give a per-LEVEL icon via a "#icons" table rather than a
+      // plain name, so the icon goes through the same table resolution as mpConsume. Take level 1's.
+      const icon = psTableRange(s, psText(s, "icon"));
+      skills[id] = {
+        name: s.getAttribute("name") || "",
+        icon: icon ? icon[0] : "",
+        op:   psText(s, "operateType") || "",
+        tgt:  psText(s, "targetType") || "",
+        range: parseInt(psText(s, "castRange") || "0", 10) || 0,
+        // affectRange is the AoE radius and is what the engine's MOBS_NEAR pack count uses. NOT
+        // effectRange, which is just how far the skill stays effective and is set on single-target
+        // skills too (Stun Attack is targetType ONE with effectRange 400).
+        area:  parseInt(psText(s, "affectRange") || "0", 10) || 0,
+        reuse: parseInt(psText(s, "reuseDelay") || "0", 10) || 0,
+        mp: mp ? mp.join("-") : "",
+        weapon: kinds.join("/"),
+        desc
+      };
+    }
+    if (onProgress) onProgress(++n, files.length, "skills");
+  }
+  return skills;
+}
+
+async function psIndexTrees(dir, onProgress){
+  const trees = {};
+  const files = [];
+  const walk = async (d, prefix) => {
+    for await (const e of d.values()){
+      if (e.kind === "file" && e.name.toLowerCase().endsWith(".xml")) files.push({ entry:e, tier:prefix });
+      else if (e.kind === "directory") await walk(e, e.name);
+    }
+  };
+  await walk(dir, "");
+  let n = 0;
+  for (const f of files){
+    const text = await (await f.entry.getFile()).text();
+    const dom = new DOMParser().parseFromString(text, "text/xml");
+    for (const t of dom.querySelectorAll("skillTree")){
+      if ((t.getAttribute("type") || "") !== "classSkillTree") continue;
+      const cid = parseInt(t.getAttribute("classId"), 10);
+      if (isNaN(cid)) continue;
+      const pAttr = t.getAttribute("parentClassId");
+      const rec = trees[cid] || (trees[cid] = {
+        name: f.entry.name.replace(/\.xml$/i, ""), tier: f.tier,
+        parent: (pAttr == null || pAttr === "" || parseInt(pAttr,10) < 0) ? null : parseInt(pAttr,10),
+        skills: {}
+      });
+      for (const s of t.querySelectorAll("skill")){
+        const sid = parseInt(s.getAttribute("skillId"), 10);
+        const lv = parseInt(s.getAttribute("getLevel"), 10);
+        if (!sid || isNaN(lv)) continue;
+        if (rec.skills[sid] == null || lv < rec.skills[sid]) rec.skills[sid] = lv;
+      }
+    }
+    if (onProgress) onProgress(++n, files.length, "skill trees");
+  }
+  return trees;
+}
+
+// A cheap fingerprint (file count + total bytes + newest mtime) so the parse only reruns when the
+// datapack actually changed. Metadata is fast; reading the ~7 MB of text is what we're avoiding.
+async function psFingerprint(dataDir){
+  let count = 0, bytes = 0, newest = 0;
+  const visit = async (d) => {
+    for await (const e of d.values()){
+      if (e.kind === "file" && e.name.toLowerCase().endsWith(".xml")){
+        const f = await e.getFile();
+        count++; bytes += f.size; newest = Math.max(newest, f.lastModified || 0);
+      } else if (e.kind === "directory") await visit(e);
+    }
+  };
+  await visit(await psGetDir(dataDir, "stats", "skills"));
+  await visit(await psGetDir(dataDir, "stats", "players", "skillTrees"));
+  return "v" + PS_INDEX_VERSION + ":" + count + ":" + bytes + ":" + newest;
+}
+
+async function psBuildIndex(dataDir, onProgress){
+  const fp = await psFingerprint(dataDir);
+  const cached = await idbGet("datapack-index");
+  if (cached && cached.fp === fp) return { skills:cached.skills, trees:cached.trees };
+  const skills = await psIndexSkills(await psGetDir(dataDir, "stats", "skills"), onProgress);
+  const trees  = await psIndexTrees(await psGetDir(dataDir, "stats", "players", "skillTrees"), onProgress);
+  try{ await idbSet("datapack-index", { fp, skills, trees }); }catch(_){}
+  return { skills, trees };
+}
+
+/* ---------- lineage helpers (derived from parentClassId, never hardcoded) ---------- */
+function psChain(classId){
+  const out = [];
+  let c = classId, guard = 0;
+  while (c != null && guard++ < 12 && psState.idx.trees[c]){ out.push(c); c = psState.idx.trees[c].parent; }
+  return out;
+}
+function psDepth(classId){ return Math.max(0, psChain(classId).length - 1); }
+// skillId -> earliest level this lineage can have learned it.
+function psLearnLevels(classId){
+  const hit = psState.learnCache[classId];
+  if (hit) return hit;
+  const out = {};
+  psChain(classId).forEach(c => {
+    const own = psState.idx.trees[c].skills;
+    for (const sid in own) if (out[sid] == null || own[sid] < out[sid]) out[sid] = own[sid];
+  });
+  psState.learnCache[classId] = out;
+  return out;
+}
+// Earliest level ANY of the playstyle's classes learns this skill (null = nobody does).
+function psEarliest(ps, skillId){
+  let best = null;
+  psClassIds(ps).forEach(cid => {
+    const lv = psLearnLevels(cid)[skillId];
+    if (lv != null && (best == null || lv < best)) best = lv;
+  });
+  return best;
+}
+function psClassIds(ps){
+  return String(ps.attrs.classIds || "").split(",").map(s => s.trim()).filter(s => s !== "")
+    .map(s => parseInt(s,10)).filter(n => !isNaN(n));
+}
+function psClassName(cid){
+  const t = psState.idx && psState.idx.trees[cid];
+  if (!t) return "class " + cid;
+  return t.name.replace(/([a-z'])([A-Z])/g, "$1 $2");
+}
+function psTierForLevel(lv){ return lv < 20 ? 0 : lv < 40 ? 1 : lv < 76 ? 2 : 3; }
+
+/* ============================================================
+ * Validation - the same rule set as research/validate_playstyles.py, shown inline
+ * ============================================================ */
+function psValidate(ps){
+  const out = [];
+  const add = (msg, bad, row) => out.push({ msg, bad:!!bad, row: row == null ? -1 : row });
+  if (!psState.idx) return out;
+
+  const role = (ps.attrs.role || "").trim().toUpperCase();
+  if (role && PS_ROLES.indexOf(role) < 0) add("Unknown role '" + role + "'.", true);
+
+  const ids = psClassIds(ps);
+  if (!ids.length) add("No class ids - this playstyle can never be selected.", true);
+  ids.forEach(cid => { if (!psState.idx.trees[cid]) add("Class id " + cid + " is not in the datapack.", true); });
+
+  // Claim conflicts, resolved the way the engine actually resolves them: a role-specific entry wins,
+  // otherwise the FIRST role-agnostic entry wins (PhantomPlaystyleData.getPlaystyle).
+  const all = psList();
+  const self = all.indexOf(ps);
+  ids.forEach(cid => {
+    for (let i = 0; i < self; i++){
+      const other = all[i];
+      const orole = (other.attrs.role || "").trim().toUpperCase();
+      if (psClassIds(other).indexOf(cid) < 0) continue;
+      if (orole === role){
+        add("Class " + psClassName(cid) + " (" + (role || "any role") + ") is already claimed by '" +
+            (other.attrs.name || "?") + "' - this entry is dead code.", true);
+      }
+    }
+  });
+
+  const support = ids.filter(c => PS_SUPPORT_CLASSES.has(c));
+  if (support.length){
+    add("The engine never uses a playstyle for " + support.map(psClassName).join(", ") +
+        " - supportTick plays those classes (heals, buffs, cleanse, res). Anything written here is ignored.", false);
+  }
+  const summoner = ids.filter(c => PS_SUMMONER_CLASSES.has(c));
+  if (summoner.length){
+    add("Summoner lineage (" + summoner.map(psClassName).join(", ") +
+        "): the engine WILL use this, but servitor control is not implemented - only the caster's own skills fire.", false);
+  }
+
+  // Per-entry checks.
+  ps.entries.forEach((e, i) => {
+    const id = parseInt(e.attrs.id, 10);
+    const def = psState.idx.skills[id];
+    const label = "Row " + (i+1) + " (" + (e.attrs.name || id) + "): ";
+    if (PS_MANAGER_OWNED[id]) add(label + "skill " + id + " is manager-owned - " + PS_MANAGER_OWNED[id] + ". Never list it.", true, i);
+    if (!def) add(label + "skill id " + id + " is not defined in the datapack.", true, i);
+    else if (e.attrs.name && def.name && e.attrs.name !== def.name)
+      add(label + "name doesn't match the datapack ('" + def.name + "').", false, i);
+    if (def && ids.length && psEarliest(ps, id) == null)
+      add(label + "no class in this lineage ever learns it.", true, i);
+    if (PS_USES.indexOf(e.attrs.use) < 0) add(label + "unknown use '" + (e.attrs.use || "") + "'.", true, i);
+    (e.attrs.when || "ALWAYS").split(",").forEach(tok => {
+      const t = tok.trim().toUpperCase();
+      if (t && !(t in PS_CONDS)) add(label + "unknown condition '" + tok.trim() + "'.", true, i);
+    });
+    const lo = parseInt(e.attrs.minLevel || "1", 10), hi = parseInt(e.attrs.maxLevel || "100", 10);
+    if (lo > hi) add(label + "minLevel " + lo + " is above maxLevel " + hi + " - it can never fire.", true, i);
+  });
+
+  // Coverage gate: at every level where a member IS one of these classes, something must be castable.
+  // Otherwise parking empties AutoUse and the member fights with nothing (the engine's fail-safe
+  // catches it at runtime, but the data is still wrong).
+  ids.forEach(cid => {
+    if (!psState.idx.trees[cid]) return;
+    PS_COVERAGE_LEVELS.forEach(lv => {
+      if (psDepth(cid) !== psTierForLevel(lv)) return;
+      const learn = psLearnLevels(cid);
+      const ok = ps.entries.some(e => {
+        const id = parseInt(e.attrs.id, 10);
+        const at = learn[id];
+        const lo = parseInt(e.attrs.minLevel || "1", 10), hi = parseInt(e.attrs.maxLevel || "100", 10);
+        return at != null && at <= lv && lv >= lo && lv <= hi;
+      });
+      if (!ok) add("Coverage: " + psClassName(cid) + " has nothing castable at level " + lv + ".", true);
+    });
+  });
+  return out;
+}
+
+/* ============================================================
+ * Panel
+ * ============================================================ */
+function psBuildPanel(){
+  const sec = document.createElement("section");
+  sec.className = "panel"; sec.dataset.panel = "__ps";
+  sec.innerHTML = '<div class="panel-head"><h2>Phantom Playstyles</h2>' +
+    '<p>How recruited phantoms fight. The list is a priority order - the engine casts the first entry whose ' +
+    'conditions pass. <span class="muted">&middot; data/PhantomPlaystyles.xml</span></p></div>' +
+    '<div id="psBody"></div>';
+  return sec;
+}
+
+function psRender(){
+  const body = document.getElementById("psBody");
+  if (!body) return;
+  if (psState.loading) return;                       // progress text owns the pane
+  if (!psState.doc){
+    // A remembered folder that kept its permission loads itself the first time the tab is opened.
+    if (psState.rememberedOk && psState.rememberedDir){
+      psState.rememberedOk = false;                  // one shot, so a failure falls back to the button
+      psProgress("Reopening " + psState.rememberedDir.name + "...");
+      psLoadData(psState.rememberedDir);
+      return;
+    }
+    psRenderEmpty(body);
+    return;
+  }
+  body.innerHTML = "";
+
+  // toolbar
+  const bar = document.createElement("div");
+  bar.className = "ps-toolbar";
+  bar.innerHTML = '<button class="btn btn-ghost btn-sm" onclick="psNewPlaystyle()">+ New playstyle</button>' +
+    '<button class="btn btn-ghost btn-sm" onclick="psClonePlaystyle()">Clone selected</button>' +
+    '<button class="btn btn-ghost btn-sm" onclick="psDeletePlaystyle()">Delete selected</button>' +
+    '<span class="spacer"></span>' +
+    '<button class="btn btn-ghost btn-sm" onclick="psSelfTest()">Self-test</button>';
+  body.appendChild(bar);
+
+  if (!psState.safe){
+    const n = document.createElement("div");
+    n.className = "ps-note bad";
+    n.innerHTML = "<div><b>Editing disabled for this file.</b> The panel could not reproduce it byte for byte, " +
+      "which means saving could reformat parts you didn't touch. Nothing here will be written. " +
+      "Run <code class=\"inl\">Self-test</code> for the first differing line.</div>";
+    body.appendChild(n);
+  }
+
+  // level scrubber
+  const scrub = document.createElement("div");
+  scrub.className = "ps-scrub";
+  scrub.innerHTML = '<label for="psLv">Preview at level</label>' +
+    '<span class="lv" id="psLvOut">' + psState.level + '</span>' +
+    '<input id="psLv" type="range" min="1" max="80" value="' + psState.level + '">' +
+    '<span class="hint">Rows the member can\'t use at this level are dimmed.</span>';
+  body.appendChild(scrub);
+  const slider = scrub.querySelector("#psLv");
+  slider.oninput = () => {
+    psState.level = parseInt(slider.value, 10);
+    document.getElementById("psLvOut").textContent = psState.level;
+    psRenderRows();
+  };
+
+  const layout = document.createElement("div");
+  layout.className = "ps-layout";
+  layout.innerHTML = '<div class="ps-side" id="psSide"></div><div class="ps-main" id="psMain"></div>';
+  body.appendChild(layout);
+  psRenderSide();
+  psRenderMain();
+}
+
+function psRenderEmpty(body){
+  body.innerHTML = "";
+  const box = document.createElement("div");
+  box.className = "ps-empty";
+  const remembered = psState.rememberedDir;
+  box.innerHTML = '<h3>Open your <code class="inl">game/data</code> folder</h3>' +
+    '<p>The playstyle editor reads <code class="inl">PhantomPlaystyles.xml</code> plus the skill and skill-tree ' +
+    'data next to it, so it can show real skill names, costs and the level each class learns them at. ' +
+    'This is a separate folder from your config directory and is remembered on its own.</p>' +
+    (!FS_OK
+      ? '<p class="ps-progress">This browser can\'t open folders directly - use Chrome, Edge or Brave for the playstyle editor.</p>'
+      : (remembered
+          ? '<button class="btn btn-primary" onclick="psReopenRemembered()">Reopen ' + escapeHtml(remembered.name) + '</button> ' +
+            '<button class="btn btn-ghost" onclick="psPickDataFolder()">Pick a different folder</button>'
+          : '<button class="btn btn-primary" onclick="psPickDataFolder()">Open data folder</button>'));
+  body.appendChild(box);
+}
+
+function psRenderSide(){
+  const side = document.getElementById("psSide");
+  if (!side) return;
+  side.innerHTML = "";
+  psList().forEach((ps, i) => {
+    const findings = psValidate(ps);
+    const el = document.createElement("div");
+    el.className = "ps-item" + (i === psState.sel ? " sel" : "");
+    const ids = psClassIds(ps);
+    el.innerHTML = '<div class="nm">' + escapeHtml(ps.attrs.name || "(unnamed)") +
+      (findings.some(f => f.bad) ? '<span class="warn-dot"></span>' : '') + '</div>' +
+      '<div class="sub">' + escapeHtml((ps.attrs.role ? ps.attrs.role + " · " : "") +
+      ids.map(psClassName).join(", ")) + '</div>';
+    el.onclick = () => { psState.sel = i; psState.openRow = -1; psRenderSide(); psRenderMain(); };
+    side.appendChild(el);
+  });
+}
+
+function psRenderMain(){
+  const main = document.getElementById("psMain");
+  if (!main) return;
+  const all = psList();
+  const ps = all[psState.sel];
+  main.innerHTML = "";
+  if (!ps){ main.innerHTML = '<p class="muted">No playstyles in this file yet.</p>'; return; }
+
+  const head = document.createElement("div");
+  head.className = "ps-head";
+  head.innerHTML = '<div style="min-width:0"><h3>' + escapeHtml(ps.attrs.name || "(unnamed)") + '</h3>' +
+    '<div class="sub">' + (ps.attrs.role ? '<span class="ps-chip role">' + escapeHtml(ps.attrs.role) + '</span>' : '') +
+    psClassIds(ps).map(c => '<span class="ps-chip">' + escapeHtml(psClassName(c)) + ' · ' + c + '</span>').join("") +
+    '</div></div>';
+  const editBtn = document.createElement("button");
+  editBtn.className = "btn btn-ghost btn-sm";
+  editBtn.style.marginLeft = "auto";
+  editBtn.textContent = "Edit lineage";
+  editBtn.onclick = () => psEditPlaystyleMeta();
+  head.appendChild(editBtn);
+  main.appendChild(head);
+
+  psValidate(ps).forEach(f => {
+    const n = document.createElement("div");
+    n.className = "ps-note" + (f.bad ? " bad" : " info");
+    n.innerHTML = "<div>" + escapeHtml(f.msg) + "</div>";
+    main.appendChild(n);
+  });
+
+  const rows = document.createElement("div");
+  rows.className = "ps-rows";
+  rows.id = "psRows";
+  main.appendChild(rows);
+
+  const add = document.createElement("div");
+  add.className = "ps-toolbar";
+  add.style.marginTop = "14px";
+  add.innerHTML = '<button class="btn btn-ghost btn-sm" onclick="psAddSkill()">+ Add skill</button>';
+  main.appendChild(add);
+
+  psRenderRows();
+}
+
+function psMech(def){
+  if (!def) return "";
+  const bits = [];
+  if (def.mp) bits.push(def.mp + " MP");
+  if (def.reuse) bits.push(Math.round(def.reuse/1000) + "s reuse");
+  if (def.range) bits.push(def.range + " range");
+  if (def.area) bits.push(def.area + " AoE radius");   // only real area skills carry affectRange
+  if (def.weapon) bits.push("needs " + def.weapon);
+  return bits.join(" · ");
+}
+function psWhenText(attrs){
+  const toks = (attrs.when || "ALWAYS").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+  return toks.map(t => {
+    const tpl = PS_COND_TEXT[t] || t;
+    const param = PS_CONDS[t];
+    return tpl.replace("{v}", param ? (attrs[param] != null ? attrs[param] : "?") : "");
+  }).join(", ");
+}
+
+function psRenderRows(){
+  const rows = document.getElementById("psRows");
+  if (!rows) return;
+  const ps = psList()[psState.sel];
+  if (!ps) return;
+  rows.innerHTML = "";
+  if (!ps.entries.length){
+    rows.innerHTML = '<div style="padding:22px 14px" class="muted">No skills listed. The member keeps stock auto-use behaviour.</div>';
+    return;
+  }
+  ps.entries.forEach((e, i) => rows.appendChild(psRow(ps, e, i)));
+}
+
+function psRow(ps, e, i){
+  const id = parseInt(e.attrs.id, 10);
+  const def = psState.idx ? psState.idx.skills[id] : null;
+  const at = psEarliest(ps, id);
+  const lo = parseInt(e.attrs.minLevel || "1", 10), hi = parseInt(e.attrs.maxLevel || "100", 10);
+  const live = at != null && at <= psState.level && psState.level >= lo && psState.level <= hi;
+
+  const row = document.createElement("div");
+  row.className = "ps-row" + (live ? "" : " dim");
+  row.draggable = psState.safe;
+  row.dataset.i = i;
+
+  const grip = document.createElement("div");
+  grip.className = "ps-grip";
+  grip.innerHTML = '☰<div class="prio">' + (i+1) + '</div>';
+  grip.style.flexDirection = "column";
+  row.appendChild(grip);
+
+  const icon = document.createElement("div");
+  icon.className = "ps-icon u-" + (e.attrs.use || "ROTATION");
+  icon.textContent = (e.attrs.use || "?").slice(0,3);
+  if (def && def.icon) psApplyIcon(icon, def.icon);
+  row.appendChild(icon);
+
+  const bodyEl = document.createElement("div");
+  bodyEl.className = "ps-body";
+  const flags = [];
+  if (PS_MANAGER_OWNED[id]) flags.push('<span class="ps-flag bad">manager-owned</span>');
+  if (!def) flags.push('<span class="ps-flag bad">unknown id</span>');
+  else if (at == null) flags.push('<span class="ps-flag bad">never learned</span>');
+  else if (!live) flags.push('<span class="ps-flag">' + (at > psState.level ? "learned at " + at : "retired") + '</span>');
+  bodyEl.innerHTML =
+    '<div class="ps-name">' + escapeHtml((def && def.name) || e.attrs.name || ("skill " + id)) +
+      '<span class="id">#' + id + '</span>' + flags.join("") + '</div>' +
+    '<div class="ps-when"><b>' + escapeHtml(e.attrs.use || "?") + '</b> - ' + escapeHtml(psWhenText(e.attrs)) +
+      (e.attrs.paceMs ? ", at most every " + (parseInt(e.attrs.paceMs,10)/1000) + "s" : "") +
+      (e.attrs.minLevel || e.attrs.maxLevel ? ' <span class="muted">(levels ' + lo + "–" + (hi === 100 ? "80" : hi) + ')</span>' : '') +
+    '</div>' +
+    (def ? '<div class="ps-mech">' + escapeHtml(psMech(def)) + '</div>' : '');
+  if (def && def.desc) bodyEl.title = def.desc;
+  row.appendChild(bodyEl);
+
+  const acts = document.createElement("div");
+  acts.className = "ps-acts";
+  const mk = (label, title, fn, cls) => {
+    const b = document.createElement("button");
+    b.className = "ps-x" + (cls ? " " + cls : "");
+    b.innerHTML = label; b.title = title;
+    b.onclick = (ev) => { ev.stopPropagation(); fn(); };
+    b.disabled = !psState.safe;
+    return b;
+  };
+  acts.appendChild(mk("↑", "Move up", () => psMove(i, -1)));
+  acts.appendChild(mk("↓", "Move down", () => psMove(i, +1)));
+  acts.appendChild(mk("✎", "Edit conditions", () => { psState.openRow = (psState.openRow === i ? -1 : i); psRenderRows(); }));
+  acts.appendChild(mk("✕", "Remove", () => psRemoveRow(i), "del"));
+  row.appendChild(acts);
+
+  if (psState.openRow === i) row.appendChild(psRowEditor(ps, e, i));
+
+  // drag to reorder - document order IS priority, so this is the main interaction
+  row.addEventListener("dragstart", (ev) => {
+    ev.dataTransfer.setData("text/plain", String(i));
+    ev.dataTransfer.effectAllowed = "move";
+    row.classList.add("drag");
+  });
+  row.addEventListener("dragend", () => row.classList.remove("drag"));
+  row.addEventListener("dragover", (ev) => { ev.preventDefault(); row.classList.add("over"); });
+  row.addEventListener("dragleave", () => row.classList.remove("over"));
+  row.addEventListener("drop", (ev) => {
+    ev.preventDefault();
+    row.classList.remove("over");
+    const from = parseInt(ev.dataTransfer.getData("text/plain"), 10);
+    if (!isNaN(from) && from !== i) psReorder(from, i);
+  });
+  return row;
+}
+
+function psRowEditor(ps, e, i){
+  const wrap = document.createElement("div");
+  wrap.className = "ps-edit";
+
+  const useSel = '<div class="ps-f"><label>Use</label><select id="psUse">' +
+    PS_USES.map(u => '<option' + (u === e.attrs.use ? " selected" : "") + '>' + u + '</option>').join("") +
+    '</select></div>';
+  const num = (key, label, ph) => '<div class="ps-f"><label>' + label + '</label>' +
+    '<input type="number" data-k="' + key + '" value="' + escapeHtml(e.attrs[key] || "") + '" placeholder="' + (ph||"") + '"></div>';
+
+  wrap.innerHTML = '<div class="ps-grid">' + useSel + num("minLevel","Min level","1") +
+    num("maxLevel","Max level","80") + num("paceMs","Pace floor (ms)","default") + '</div>' +
+    '<div style="margin-top:14px"><label style="display:block;font-size:11px;letter-spacing:.05em;' +
+    'text-transform:uppercase;color:var(--stone);margin-bottom:6px">Conditions (all must hold)</label>' +
+    '<div class="ps-conds" id="psConds"></div></div>' +
+    '<div class="ps-grid" id="psCondParams" style="margin-top:12px"></div>';
+
+  const active = new Set((e.attrs.when || "ALWAYS").split(",").map(s => s.trim().toUpperCase()).filter(Boolean));
+  const conds = wrap.querySelector("#psConds");
+  Object.keys(PS_CONDS).forEach(c => {
+    const chip = document.createElement("button");
+    chip.className = "ps-cond" + (active.has(c) ? " on" : "");
+    chip.textContent = c;
+    chip.onclick = () => {
+      if (active.has(c)) active.delete(c); else active.add(c);
+      if (!active.size) active.add("ALWAYS");
+      psSetWhen(ps, i, active);
+    };
+    conds.appendChild(chip);
+  });
+
+  // Only the parameters the chosen conditions actually take.
+  const params = wrap.querySelector("#psCondParams");
+  active.forEach(c => {
+    const key = PS_CONDS[c];
+    if (!key) return;
+    const f = document.createElement("div");
+    f.className = "ps-f";
+    f.innerHTML = '<label>' + key + ' <span class="muted">(' + c + ')</span></label>' +
+      '<input type="number" data-k="' + key + '" value="' + escapeHtml(e.attrs[key] || "") + '">';
+    params.appendChild(f);
+  });
+
+  wrap.querySelector("#psUse").onchange = (ev) => psSetAttr(ps, i, "use", ev.target.value);
+  wrap.querySelectorAll("input[data-k]").forEach(inp => {
+    inp.onchange = () => psSetAttr(ps, i, inp.dataset.k, inp.value.trim());
+  });
+  return wrap;
+}
+
+/* ---------- icons (optional, from a user-supplied extracted folder) ----------
+ * Extraction tools lay their output out differently - flat, or in a subfolder named after the
+ * package ("Icon/skill0056.png"), with varying case. So rather than guess a path per skill, index
+ * every image under the chosen folder once by lowercased basename and look up from that. It is
+ * layout-agnostic, case-insensitive, and avoids a burst of failed getFileHandle calls per row. */
+async function psIndexIcons(dir){
+  const map = {};
+  const walk = async (d, depth) => {
+    for await (const e of d.values()){
+      if (e.kind === "file"){
+        const m = /^(.*)\.(png|jpe?g|webp|gif|bmp)$/i.exec(e.name);
+        if (m){
+          const key = m[1].toLowerCase();
+          if (!map[key]) map[key] = e;            // first match wins
+        }
+      } else if (e.kind === "directory" && depth < 2){
+        try{ await walk(e, depth + 1); }catch(_){}
+      }
+    }
+  };
+  await walk(dir, 0);
+  return map;
+}
+
+async function psApplyIcon(el, iconName){
+  // "icon.skill0056" -> package "icon", texture "skill0056". Match on the texture name.
+  const base = String(iconName).replace(/^[^.]*\./, "").trim().toLowerCase();
+  if (!base || !psState.iconFiles) return;
+  if (psState.iconCache[base] === null) return;
+  if (psState.iconCache[base]){ el.innerHTML = '<img alt="" src="' + psState.iconCache[base] + '">'; return; }
+  const entry = psState.iconFiles[base];
+  if (!entry){ psState.iconCache[base] = null; return; }
+  try{
+    const url = URL.createObjectURL(await entry.getFile());
+    psState.iconCache[base] = url;
+    el.innerHTML = '<img alt="" src="' + url + '">';
+  }catch(_){ psState.iconCache[base] = null; }
+}
+
+async function psAutoLoadIcons(dataDir){
+  // The icon set ships next to the datapack at game/data/skill icons, so it is resolved straight from
+  // the already-granted game/data handle - a child directory inherits the folder's permission, so no
+  // separate pick (and no button) is needed. Absent on some installs, which is fine: rows just keep
+  // their text badge.
+  try{
+    const dir = await dataDir.getDirectoryHandle(ICON_SUBDIR);
+    await psUseIconFolder(dir, false);
+  }catch(_){ /* no "skill icons" folder next to the datapack - leave rows on their text badges */ }
+}
+
+async function psUseIconFolder(dir, announce){
+  psState.iconDir = dir;
+  psState.iconCache = {};
+  psState.iconFiles = await psIndexIcons(dir);
+  const found = Object.keys(psState.iconFiles).length;
+  psRender();
+  if (!announce) return;
+  if (!found){
+    toast("No images found in " + dir.name + ". Point this at a folder of extracted client icons " +
+          "(PNG files named like skill0056.png) - the server files contain no artwork.", true);
+  } else {
+    // Say how many of the icons this file actually needs were matched, so a wrong folder is obvious.
+    let want = 0, have = 0;
+    psList().forEach(ps => ps.entries.forEach(e => {
+      const def = psState.idx && psState.idx.skills[parseInt(e.attrs.id,10)];
+      if (!def || !def.icon) return;
+      want++;
+      if (psState.iconFiles[def.icon.replace(/^[^.]*\./, "").toLowerCase()]) have++;
+    }));
+    toast("Indexed " + found + " images - matched " + have + " of the " + want + " skill icons in this file.");
+  }
+}
+
+/* ============================================================
+ * Edit actions
+ * ============================================================ */
+function psTouch(){ psState.learnCache = {}; refreshDirtyUI(); }
+
+function psSetAttr(ps, i, key, value){
+  const e = ps.entries[i];
+  if (value === "" || value == null) delete e.attrs[key]; else e.attrs[key] = String(value);
+  e.edited = true;
+  psTouch();
+  psRenderRows();
+}
+function psSetWhen(ps, i, activeSet){
+  const e = ps.entries[i];
+  const list = Object.keys(PS_CONDS).filter(c => activeSet.has(c));   // keep the canonical order
+  e.attrs.when = list.join(",");
+  // Drop parameters whose condition is no longer selected, so no orphan attributes are written.
+  Object.keys(PS_CONDS).forEach(c => {
+    const key = PS_CONDS[c];
+    if (key && !activeSet.has(c) && !list.some(l => PS_CONDS[l] === key)) delete e.attrs[key];
+  });
+  e.edited = true;
+  psTouch();
+  psRenderRows();
+}
+function psMove(i, delta){
+  const ps = psList()[psState.sel];
+  const j = i + delta;
+  if (!ps || j < 0 || j >= ps.entries.length) return;
+  psReorder(i, j);
+}
+function psReorder(from, to){
+  const ps = psList()[psState.sel];
+  if (!ps) return;
+  const [moved] = ps.entries.splice(from, 1);
+  ps.entries.splice(to, 0, moved);
+  psState.openRow = -1;
+  psTouch();
+  psRenderMain();
+}
+function psRemoveRow(i){
+  const ps = psList()[psState.sel];
+  if (!ps) return;
+  const e = ps.entries[i];
+  if (!confirm("Remove " + (e.attrs.name || ("skill " + e.attrs.id)) + " from " + ps.attrs.name + "?")) return;
+  ps.entries.splice(i, 1);
+  psState.openRow = -1;
+  psTouch();
+  psRenderMain();
+}
+
+/* ---------- modal helper ---------- */
+function psModal(title, bodyHtml, onMount, onOk, okLabel){
+  const mask = document.createElement("div");
+  mask.className = "ps-mask";
+  mask.innerHTML = '<div class="ps-modal"><h3>' + escapeHtml(title) + '</h3>' +
+    '<div class="mbody">' + bodyHtml + '</div>' +
+    '<div class="mfoot"><button class="btn btn-ghost btn-sm" data-x>Cancel</button>' +
+    (onOk ? '<button class="btn btn-primary btn-sm" data-ok>' + escapeHtml(okLabel || "Add") + '</button>' : '') +
+    '</div></div>';
+  document.body.appendChild(mask);
+  const close = () => mask.remove();
+  mask.querySelector("[data-x]").onclick = close;
+  mask.onclick = (ev) => { if (ev.target === mask) close(); };
+  const okBtn = mask.querySelector("[data-ok]");
+  if (okBtn) okBtn.onclick = () => { if (onOk(mask) !== false) close(); };
+  if (onMount) onMount(mask, close);
+  return mask;
+}
+
+/* ---------- add a skill (filtered to what the lineage actually learns) ---------- */
+function psAddSkill(){
+  const ps = psList()[psState.sel];
+  if (!ps || !psState.safe) return;
+  const ids = psClassIds(ps);
+  if (!ids.length){ toast("Give this playstyle a class id first.", true); return; }
+
+  // Union of everything the lineage learns, with the earliest learn level.
+  const learnable = {};
+  ids.forEach(cid => {
+    const lv = psLearnLevels(cid);
+    for (const sid in lv) if (learnable[sid] == null || lv[sid] < learnable[sid]) learnable[sid] = lv[sid];
+  });
+  const already = new Set(ps.entries.map(e => String(parseInt(e.attrs.id,10))));
+  const rows = Object.keys(learnable)
+    .map(sid => ({ id:parseInt(sid,10), at:learnable[sid], def:psState.idx.skills[sid] }))
+    .filter(r => r.def && r.def.name)
+    .sort((a,b) => a.at - b.at || a.def.name.localeCompare(b.def.name));
+
+  psModal("Add a skill to " + (ps.attrs.name || ""),
+    '<input type="search" id="psQ" placeholder="Filter by name or id..." autocomplete="off">' +
+    '<p class="muted" style="font-size:12.5px;margin:10px 0 4px">Only skills this lineage actually learns are listed. ' +
+    'Manager-owned skills are blocked - the party manager casts those with its own logic.</p>' +
+    '<div id="psPick" style="max-height:46vh;overflow:auto;margin-top:6px"></div>',
+    (mask, close) => {
+      const list = mask.querySelector("#psPick");
+      const draw = (q) => {
+        list.innerHTML = "";
+        const ql = q.trim().toLowerCase();
+        rows.filter(r => !ql || r.def.name.toLowerCase().includes(ql) || String(r.id) === ql)
+            .slice(0, 400).forEach(r => {
+          const owned = PS_MANAGER_OWNED[r.id];
+          const dup = already.has(String(r.id));
+          const el = document.createElement("div");
+          el.className = "ps-pick" + (owned ? " off" : "");
+          el.innerHTML = '<div class="ps-icon u-ROTATION" style="width:28px;height:28px;font-size:8px">' +
+              escapeHtml(String(r.id)).slice(0,4) + '</div>' +
+            '<div style="min-width:0"><div style="font-size:13.5px">' + escapeHtml(r.def.name) +
+              (dup ? ' <span class="ps-flag">already listed</span>' : '') +
+              (owned ? ' <span class="ps-flag bad">manager-owned</span>' : '') + '</div>' +
+            '<div class="ps-mech">' + escapeHtml(psMech(r.def)) + '</div></div>' +
+            '<div class="lv">learned at ' + r.at + '</div>';
+          if (owned){ el.title = owned; }
+          else el.onclick = () => {
+            psInsertRow(ps, r.id, r.def.name);
+            close();
+          };
+          list.appendChild(el);
+        });
+        if (!list.children.length) list.innerHTML = '<p class="muted" style="padding:14px">Nothing matches.</p>';
+      };
+      draw("");
+      const q = mask.querySelector("#psQ");
+      q.oninput = () => draw(q.value);
+      q.focus();
+    });
+}
+
+function psInsertRow(ps, id, name){
+  const indent = (ps.entries[0] && ps.entries[0].indent) || (ps.indent + "\t");
+  ps.entries.push({ lead:[], indent, raw:"", edited:true,
+    attrs:{ id:String(id), name:name || "", use:"ROTATION", when:"ALWAYS" } });
+  psState.openRow = ps.entries.length - 1;
+  psTouch();
+  psRenderMain();
+}
+
+/* ---------- create / clone / delete / edit a playstyle ---------- */
+function psClassPickerHtml(selected){
+  const ids = Object.keys(psState.idx.trees).map(n => parseInt(n,10)).sort((a,b) => a-b);
+  return ids.map(cid =>
+    '<label class="ps-chip" style="cursor:pointer"><input type="checkbox" value="' + cid + '"' +
+    (selected.indexOf(cid) >= 0 ? " checked" : "") + ' style="margin-right:5px;width:auto"> ' +
+    escapeHtml(psClassName(cid)) + " · " + cid + '</label>').join("");
+}
+
+function psMetaModal(title, initial, onOk){
+  psModal(title,
+    '<div class="ps-f" style="margin-bottom:12px"><label>Name</label>' +
+      '<input type="text" id="psName" value="' + escapeHtml(initial.name || "") + '" placeholder="e.g. Storm Screamer"></div>' +
+    '<div class="ps-f" style="margin-bottom:12px"><label>Role (only needed when one class id is shared by two archetypes)</label>' +
+      '<select id="psRole" style="width:100%"><option value="">(any role)</option>' +
+      PS_ROLES.map(r => '<option' + (initial.role === r ? " selected" : "") + '>' + r + '</option>').join("") +
+      '</select></div>' +
+    '<div class="ps-f"><label>Classes this covers</label><div class="ps-classes" id="psCls">' +
+      psClassPickerHtml(initial.classIds || []) + '</div></div>',
+    null,
+    (mask) => {
+      const name = mask.querySelector("#psName").value.trim();
+      const role = mask.querySelector("#psRole").value;
+      const cls = Array.from(mask.querySelectorAll("#psCls input:checked")).map(i => i.value);
+      if (!name){ toast("Give it a name.", true); return false; }
+      if (!cls.length){ toast("Pick at least one class.", true); return false; }
+      onOk({ name, role, classIds: cls.join(",") });
+    }, "Save");
+}
+
+function psInsertPlaystyle(attrs, entries){
+  const doc = psState.doc;
+  // Land it just before the closing </list>, after any trailing blank lines.
+  let at = doc.items.length;
+  for (let i = doc.items.length - 1; i >= 0; i--){
+    if (doc.items[i].t === "raw" && doc.items[i].text.indexOf("</list>") >= 0){ at = i; break; }
+  }
+  while (at > 0 && doc.items[at-1].t === "raw" && doc.items[at-1].text.trim() === "") at--;
+  const indent = "\t";
+  const ps = {
+    t:"ps",
+    lead:["", indent + "<!-- " + attrs.name + ". Added with the control panel. -->"],
+    indent, openRaw:"", attrs, edited:true,
+    entries: (entries || []).map(e => ({ lead:[], indent: indent + "\t", raw:"", edited:true, attrs:Object.assign({}, e.attrs) })),
+    trail:[], closeRaw:null
+  };
+  doc.items.splice(at, 0, ps);
+  psState.sel = psList().indexOf(ps);
+  psState.openRow = -1;
+  psTouch();
+  psRender();
+}
+
+function psNewPlaystyle(){
+  if (!psState.safe || !psState.idx) return;
+  psMetaModal("New playstyle", {}, (attrs) => psInsertPlaystyle(attrs, []));
+}
+function psClonePlaystyle(){
+  const src = psList()[psState.sel];
+  if (!src || !psState.safe) return;
+  psMetaModal("Clone '" + (src.attrs.name || "") + "'",
+    { name:(src.attrs.name || "") + " copy", role:src.attrs.role || "", classIds:[] },
+    (attrs) => psInsertPlaystyle(attrs, src.entries));
+}
+function psEditPlaystyleMeta(){
+  const ps = psList()[psState.sel];
+  if (!ps || !psState.safe) return;
+  psMetaModal("Edit lineage", { name:ps.attrs.name, role:ps.attrs.role || "", classIds:psClassIds(ps) },
+    (attrs) => {
+      ps.attrs.name = attrs.name;
+      ps.attrs.classIds = attrs.classIds;
+      if (attrs.role) ps.attrs.role = attrs.role; else delete ps.attrs.role;
+      ps.edited = true;
+      psTouch();
+      psRender();
+    });
+}
+function psDeletePlaystyle(){
+  const ps = psList()[psState.sel];
+  if (!ps || !psState.safe) return;
+  const names = psClassIds(ps).map(psClassName).join(", ");
+  if (!confirm("Delete '" + (ps.attrs.name || "") + "'?\n\n" + (names || "Those classes") +
+    " would lose their playstyle and fall back to stock auto-use behaviour.")) return;
+  const doc = psState.doc;
+  doc.items.splice(doc.items.indexOf(ps), 1);
+  psState.sel = Math.max(0, psState.sel - 1);
+  psState.openRow = -1;
+  psTouch();
+  psRender();
+}
+
+/* ---------- self-test: prove we can reproduce the file we loaded ---------- */
+function psSelfTest(){
+  if (!psState.doc){ toast("Nothing loaded.", true); return; }
+  const before = psState.original.split(/\r?\n/);
+  const after = psSerialize(psParse(psState.original)).split(/\r?\n/);
+  for (let i = 0; i < Math.max(before.length, after.length); i++){
+    if (before[i] !== after[i]){
+      console.warn("round-trip differs at line " + (i+1) + "\nfile: " + before[i] + "\nours: " + after[i]);
+      toast("Round-trip differs at line " + (i+1) + " - see the browser console.", true);
+      return;
+    }
+  }
+  toast("Round-trip clean: " + before.length + " lines reproduced exactly.");
+}
+
+/* ============================================================
+ * Loading
+ * ============================================================ */
+async function psPickDataFolder(){
+  if (!FS_OK) return;
+  try{
+    const dir = await window.showDirectoryPicker({ id:"l2admin-data", mode:"readwrite" });
+    await psLoadData(dir);
+  }catch(err){
+    if (err && err.name === "AbortError") return;
+    console.error(err);
+    toast("Couldn't open that folder.", true);
+  }
+}
+
+function psProgress(msg){
+  const body = document.getElementById("psBody");
+  if (body) body.innerHTML = '<div class="ps-empty"><h3>Reading the datapack</h3>' +
+    '<p class="ps-progress">' + escapeHtml(msg) + '</p></div>';
+}
+
+async function psLoadData(dir){
+  const data = await psResolveDataDir(dir);
+  if (!data){
+    toast("No " + PS_FILE + " in that folder - pick your server's game/data directory.", true);
+    return;
+  }
+  psState.loading = true;
+  psProgress("Looking for " + PS_FILE + "...");
+  try{
+    psState.dataDir = data;
+    psState.fileHandle = await data.getFileHandle(PS_FILE);
+    const text = await (await psState.fileHandle.getFile()).text();
+    psState.original = text;
+    psState.doc = psParse(text);
+    psState.safe = psRoundTripOk();
+
+    psState.idx = await psBuildIndex(data, (n, total, what) =>
+      psProgress("Indexing " + what + " - " + n + " / " + total + " files"));
+    psState.learnCache = {};
+    psState.sel = 0;
+    try{ await idbSet("data-dir", dir); }catch(_){}
+    await psAutoLoadIcons(data);
+    if (!psState.safe) toast("This file has formatting the editor can't reproduce - editing is disabled.", true);
+  }catch(err){
+    console.error(err);
+    toast("Couldn't read the datapack: " + (err && err.message || err), true);
+    psState.doc = null;
+  }finally{
+    psState.loading = false;
+    psRender();
+    refreshDirtyUI();
+  }
+}
+
+// Restore the remembered data folder. Deliberately only remembers the HANDLE here - the actual load
+// happens the first time the tab is opened, because the panel it renders into doesn't exist until the
+// editor shell is built. A handle whose permission didn't survive the reload needs a user gesture
+// anyway, which the button in the panel provides. Icons are derived from the data folder on load
+// (game/data/skill icons), so there is nothing separate to remember for them.
+async function psInitRemembered(){
+  if (!FS_OK) return;
+  try{
+    const dir = await idbGet("data-dir");
+    if (!dir) return;
+    psState.rememberedDir = dir;
+    psState.rememberedOk = (await dir.queryPermission({ mode:"readwrite" })) === "granted";
+    psRender();
+  }catch(_){}
+}
+
+// One-click reopen for a remembered folder whose write permission lapsed.
+async function psReopenRemembered(){
+  const dir = psState.rememberedDir;
+  if (!dir){ psPickDataFolder(); return; }
+  try{
+    if ((await dir.requestPermission({ mode:"readwrite" })) !== "granted"){
+      toast("Write access was not granted. Pick the folder again.", true);
+      return;
+    }
+    await psLoadData(dir);
+  }catch(err){
+    console.error(err);
+    try{ await idbDel("data-dir"); }catch(_){}
+    psPickDataFolder();
+  }
+}
+
+async function psSave(){
+  if (!psDirty()) return;
+  if (!psState.safe) throw new Error("round-trip guard active - refusing to write " + PS_FILE);
+  const text = psSerialize(psState.doc);
+  if (psState.fileHandle && state.mode !== "download"){
+    const w = await psState.fileHandle.createWritable();
+    await w.write(text);
+    await w.close();
+  } else {
+    downloadText(PS_FILE, text);
+  }
+  psState.original = text;
 }
 
 /* ============================================================
@@ -809,7 +2118,7 @@ function toast(msg, err){
 
 // warn before leaving with unsaved changes
 window.addEventListener("beforeunload", (e) => {
-  if (dirtyFiles().length){ e.preventDefault(); e.returnValue = ""; }
+  if (dirtyFiles().length || psDirty()){ e.preventDefault(); e.returnValue = ""; }
 });
 
 // compatibility hint on the empty state
@@ -820,8 +2129,9 @@ if (!FS_OK){
     "You can still load .ini files here and download the edited versions to copy back.";
   document.getElementById("openBtn").textContent = "Load config files";
 } else {
-  // Restore the last-used folder (auto-load if still permitted, else a one-click reopen).
+  // Restore the last-used folders (auto-load if still permitted, else a one-click reopen).
   initRemembered();
+  psInitRemembered();
 }
 </script>
 </body>

@@ -90,6 +90,7 @@ import org.l2jmobius.gameserver.data.xml.NpcData;
 import org.l2jmobius.gameserver.data.xml.RouteData;
 import org.l2jmobius.gameserver.data.xml.NpcNameLocalisationData;
 import org.l2jmobius.gameserver.data.xml.OptionData;
+import org.l2jmobius.gameserver.data.xml.PhantomPlaystyleData;
 import org.l2jmobius.gameserver.data.xml.PetDataTable;
 import org.l2jmobius.gameserver.data.xml.PetSkillData;
 import org.l2jmobius.gameserver.data.xml.PlayerTemplateData;
@@ -294,6 +295,7 @@ public class GameServer
 		RouteData.getInstance();
 		FakePlayerBehaviorManager.getInstance();
 		PhantomManager.getInstance();
+		PhantomPlaystyleData.getInstance();
 		PhantomBuddyManager.getInstance();
 		StaticObjectData.getInstance();
 		CastleManager.getInstance().loadInstances();

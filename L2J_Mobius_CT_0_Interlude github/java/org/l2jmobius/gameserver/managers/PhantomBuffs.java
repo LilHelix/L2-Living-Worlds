@@ -136,8 +136,9 @@ public final class PhantomBuffs
 		1008, // The Glory of Pa'agrio (M.Def)
 		1260); // The Tact of Pa'agrio (evasion)
 
-	private static final Set<Integer> WIND_WALK = Set.of(1204, 4342, 4391);
-	private static final Set<Integer> ACUMEN = Set.of(1085, 4355, 4400);
+	// Berserker Spirit (Prophet 1062 + its Elder/Orc variants). A power buff that also CUTS P.Def and M.Def, so it
+	// helps damage dealers but hurts a tank - withheld from tanks by tankAvoids() at buff-selection and at spawn.
+	private static final Set<Integer> BERSERKER_SPIRIT = Set.of(1062, 4352, 4397);
 
 	// Pre-buff kits applied to a recruited member the moment it spawns, so it arrives already fully buffed for its
 	// level (no need to re-buff a fresh party from scratch). Prophet/Elder primary ids; an unknown id is skipped.
@@ -145,6 +146,11 @@ public final class PhantomBuffs
 	{
 		1204 // Wind Walk
 	};
+	// The pre-buff kits mirror the AUTO_* maintained kits (Prophet/Elder primary ids), so a member spawns with the
+	// SAME buffs the party's buffer keeps up. That is what makes ongoing upkeep of recruited members cheap: the
+	// buffer finds the slots already filled and casts nothing until a 20-minute buff actually lapses, instead of
+	// paying the whole kit right before a pull. Berserker Spirit is applied separately (PREBUFF_BERSERKER) so it can
+	// be withheld from tanks.
 	private static final int[] PREBUFF_MELEE =
 	{
 		1068, // Might
@@ -156,7 +162,12 @@ public final class PhantomBuffs
 		1087, // Agility
 		1040, // Shield
 		1243, // Bless Shield (shield block rate)
-		1035 // Mental Shield
+		1044, // Regeneration (HP regen)
+		1259, // Resist Shock (anti-stun)
+		1035, // Mental Shield
+		1036, // Magic Barrier
+		1045, // Blessed Body
+		1048 // Blessed Soul
 	};
 	private static final int[] PREBUFF_CASTER =
 	{
@@ -166,8 +177,18 @@ public final class PhantomBuffs
 		1078, // Concentration
 		1397, // Clarity
 		1040, // Shield (P.Def survivability for casters too)
+		1047, // Mana Regeneration
+		1259, // Resist Shock (a stunned caster is a dead caster)
+		1035, // Mental Shield
 		1036, // Magic Barrier
-		1035 // Mental Shield
+		1045, // Blessed Body
+		1048, // Blessed Soul
+		1062 // Berserker Spirit (a nuker wants the power; casters are never tanks)
+	};
+	// Berserker Spirit for MELEE - applied only to non-tanks (it lowers P.Def / M.Def; see tankAvoids).
+	private static final int[] PREBUFF_BERSERKER =
+	{
+		1062 // Berserker Spirit
 	};
 
 	// Buff names/aliases a player might ask for by name ("give me might", "ww pls"). Maps to a canonical word
@@ -277,31 +298,33 @@ public final class PhantomBuffs
 	}
 
 	/**
+	 * Whether {@code skillId} is part of the curated core kit auto-maintained on a target of the given archetype.
+	 * EVERY tier - self, member and leader alike - gets the same full class-appropriate kit now (a fighter the melee
+	 * core, a caster the magic core, both Wind Walk); the split is purely caster-vs-fighter, keyed on
+	 * {@code targetIsCaster}. Only this curated core is auto-maintained (so it fits the 20 buff-slot cap and never
+	 * rotates); situational / consumable buffs (Greater Might/Shield, War/Earth Chant, Clarity, Greater Empower, extra
+	 * resistances, ...) are left out here and cast on request only.
 	 * @param skillId the buff the buffer knows
-	 * @param targetIsCaster whether the target is a magic user
-	 * @param tier the target's role relative to the buffer
-	 * @return {@code true} if this buff should be maintained automatically on that target. Only the curated core
-	 *         kit is auto-maintained (so it fits the 20 buff-slot cap and never rotates); the situational /
-	 *         consumable buffs left out here are cast on request only.
+	 * @param targetIsCaster whether the target is a magic user (chooses the caster vs melee core)
+	 * @param tier retained for the call sites' intent (self / member / leader); it no longer changes the kit - every
+	 *            tier receives the full archetype core. Role-specific exceptions (e.g. Berserker off a tank) layer on
+	 *            top via {@link #tankAvoids}, not here.
+	 * @return {@code true} if this buff should be auto-maintained on that target
 	 */
 	public static boolean wanted(int skillId, boolean targetIsCaster, Tier tier)
 	{
-		switch (tier)
-		{
-			case SELF:
-			{
-				return WIND_WALK.contains(skillId) || ACUMEN.contains(skillId);
-			}
-			case MEMBER:
-			case LEADER:
-			default:
-			{
-				// Curated whitelist: the core archetype kit only. A fighter gets the melee core, a caster the magic
-				// core, both get Wind Walk. Anything not listed (Greater Might/Shield, War/Earth Chant, Clarity,
-				// Greater Empower, resistances, ...) is deliberately NOT auto-maintained - it's available on request.
-				return AUTO_COMMON.contains(skillId) || (targetIsCaster ? AUTO_CASTER.contains(skillId) : AUTO_MELEE.contains(skillId));
-			}
-		}
+		return AUTO_COMMON.contains(skillId) || (targetIsCaster ? AUTO_CASTER.contains(skillId) : AUTO_MELEE.contains(skillId));
+	}
+
+	/**
+	 * @return {@code true} if this buff should be withheld from a TANK target. Berserker Spirit is a power buff that
+	 *         also lowers P.Def / M.Def, so it belongs on damage dealers, not the party's tank. Kept separate from
+	 *         {@link #wanted} so the archetype whitelist stays about class (caster vs fighter) and role exceptions
+	 *         layer on top.
+	 */
+	public static boolean tankAvoids(int skillId)
+	{
+		return BERSERKER_SPIRIT.contains(skillId);
 	}
 
 	/**
@@ -357,10 +380,21 @@ public final class PhantomBuffs
 	 * unknown ids are skipped. The buffs are real effects with normal durations - the party's buffer keeps them up
 	 * afterwards.
 	 */
-	public static void applyFullBuffs(Player target)
+	public static void applyFullBuffs(Player target, boolean isTank)
 	{
 		applyBuffs(target, PREBUFF_COMMON);
-		applyBuffs(target, isCaster(target) ? PREBUFF_CASTER : PREBUFF_MELEE);
+		if (isCaster(target))
+		{
+			applyBuffs(target, PREBUFF_CASTER);
+		}
+		else
+		{
+			applyBuffs(target, PREBUFF_MELEE);
+			if (!isTank)
+			{
+				applyBuffs(target, PREBUFF_BERSERKER); // damage dealers get Berserker; a tank does not (it cuts defenses)
+			}
+		}
 	}
 
 	private static void applyBuffs(Player target, int[] ids)

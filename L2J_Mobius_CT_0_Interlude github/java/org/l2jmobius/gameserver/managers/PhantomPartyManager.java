@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -59,6 +60,7 @@ import org.l2jmobius.gameserver.model.effects.EffectType;
 import org.l2jmobius.gameserver.model.skill.AbnormalType;
 import org.l2jmobius.gameserver.model.skill.BuffInfo;
 import org.l2jmobius.gameserver.model.skill.Skill;
+import org.l2jmobius.gameserver.model.skill.targets.TargetType;
 import org.l2jmobius.gameserver.network.enums.ChatType;
 import org.l2jmobius.gameserver.network.serverpackets.CreatureSay;
 import org.l2jmobius.gameserver.network.serverpackets.SocialAction;
@@ -122,8 +124,8 @@ public class PhantomPartyManager
 	private static final int RAID_TANK_HEAL_PERCENT = 90; // ...and keep the tank topped this high, since it soaks the boss
 	private static final int CRITICAL_HEAL_PERCENT = 50; // a member this low is an emergency - heal it before topping the tank
 	private static final int BUFF_REFRESH_SECONDS = 20;
-	private static final int CASTER_CAST_RANGE = 650; // a nuker holds this far from the assist target so it nukes, never melees
-	private static final int CASTER_RANGE_TOLERANCE = 150; // ...with this slack, so it isn't constantly re-positioning
+	private static final int CASTER_CAST_RANGE = 650; // a nuker walks IN to within this of the assist target so it nukes from range, never melees
+	private static final int CASTER_RANGE_TOLERANCE = 150; // ...and stands and casts anywhere inside CAST_RANGE + this, never backing off as the mob closes
 	private static final int CASTER_MIN_MP = 20; // below this percent a nuker stops casting and rests instead of meleeing
 	private static final int CASTER_SPREAD_STEP = 110; // lateral spacing between casters so several don't stack and eat one AoE
 	private static final int RAID_BACKLINE_RANGE = 720; // raid ranged/support lane: far enough to avoid melee AoE, close enough for heals
@@ -153,6 +155,8 @@ public class PhantomPartyManager
 	private static final int RECHARGE_ID = 1013; // Recharge - an Elder/Shillien Elder refills a party caster's MP
 	private static final int RECHARGE_MP_PERCENT = 45; // recharge a mana-user below this MP%
 	private static final int RECHARGE_RAID_MP_PERCENT = 65; // raid support starts battery work before healers are already dry
+	private static final long CAST_WATCHDOG_FLOOR_MS = 6000; // never abort a cast sooner than this (covers every fast cast)
+	private static final long CAST_WATCHDOG_MARGIN_MS = 2000; // slack over a slow cast's own duration before it counts as wedged
 	// Raid tactics: kill-order, AoE step-out and debuff cleanse (all raid-gated, so normal farming is unaffected).
 	private static final int AOE_MIN_RADIUS = 150; // treat a raid cast as "AoE" if its affect radius is at least this (also catches splash on single-target skills)
 	private static final int AOE_STEP_MARGIN = 250; // ...and step this far PAST the blast radius when getting clear
@@ -234,11 +238,13 @@ public class PhantomPartyManager
 	// Under multi-raid burst the 1s tick can't catch 30% in time (the Ruell tank went 44% -> 5% between two
 	// ticks); with two or more raid mobs on the tank the panic button fires this early instead.
 	private static final int UD_HP_BURST_PERCENT = 50;
-	// ARCHER skill discipline: below the park mark it stops firing skills and plinks with plain (MP-free,
-	// soulshotted) auto-shots, resuming skills once MP recovers - instead of dumping every skill off cooldown
+	// ARCHER skill discipline: below the park mark it stops firing skills and plinks with plain soulshotted
+	// auto-shots (which still cost a small per-shot bow MP - see manageArcherMp), resuming skills once MP recovers
+	// - instead of dumping every skill off cooldown
 	// straight into an empty bar. Plus a short human beat before swinging onto the leader's NEW target.
 	private static final int ARCHER_SKILL_PARK_MP = 30;
 	private static final int ARCHER_SKILL_RESUME_MP = 55;
+	private static final int BOW_REST_RESUME_SHOTS = 4; // resume firing once this many bow shots' worth of MP is back
 	private static final long ASSIST_SWITCH_MIN = 400;
 	private static final long ASSIST_SWITCH_MAX = 1200;
 	// DPS aggro-easing (raid only): a DPS that rips the boss off the tank holds fire briefly so the taunt can
@@ -253,7 +259,30 @@ public class PhantomPartyManager
 	// NUKER crowd control: a loose add beating on a squishy gets slept/rooted before the nuker resumes its DPS.
 	private static final int SLEEP_ID = 1069; // Sleep (human/elf/DE nuker 2nd classes)
 	private static final int DRYAD_ROOT_ID = 1201; // Dryad Root (fallback where known)
+	private static final int STUNNING_SHOT_ID = 101; // archer peel: stun what closed on us (learned from 36)
+	private static final int HAMSTRING_SHOT_ID = 354; // ...or slow it, so we can walk away (2nd class up)
 	private static final int CC_SCAN_RANGE = 900;
+	// ===== Ranged self-preservation (ARCHER / NUKER peel) =====
+	// A ranged DD that a mob has latched onto does NOT abandon the party's kill target - focus fire is how a party
+	// kills anything. It breaks contact instead: control the attacker, back off to its own range, keep shooting the
+	// assist target. Only when that is clearly failing does survival outrank damage and it turns on the attacker.
+	private static final int PEEL_SELF_HP_PERCENT = 55; // below this, stop kiting and kill what's chewing on us
+	private static final int PEEL_EXECUTE_PERCENT = 15; // ...or just finish the attacker if it's nearly dead anyway
+	private static final int PEEL_CONTROL_COOLDOWN_MS = 9000; // floor between peel control casts, so it isn't a stun-lock
+	private static final int PEEL_STEP_BACK = 250; // how far to disengage past the attacker's reach when kiting
+	private static final int PEEL_MOVE_GRACE = 1500; // let a kite step finish before issuing another
+	private static final int KITE_STEP_MAX = 250; // a peel step opens the gap by at most this from the CURRENT spot (re-evaluated next tick), so it never snaps onto a distant 650/900 ring
+	private static final int KITE_MAX_FROM_PARTY = 1100; // ...and never kites past this from the leader - staying inside the group's cleared bubble instead of backing into fresh spawns
+	private static final int PROTECTOR_REACHED_RANGE = 150; // a support that is this close to its protector has arrived
+	// The disable a SUPPORT peels with, best first. Sleep is the cleanest (the mob stops entirely), Dryad Root and
+	// Trance are the elf/human alternatives, Dreaming Spirit is the Orc-shaman-line sleep.
+	private static final int[] SUPPORT_CONTROL_PRIORITY =
+	{
+		SLEEP_ID,
+		1394, // Trance (Eva's Saint / Cardinal line)
+		1097, // Dreaming Spirit (Warcryer / Overlord line)
+		DRYAD_ROOT_ID
+	};
 	private static final long CC_COOLDOWN_MS = 15000; // floor between two CC casts by the same nuker
 
 	// Camp-and-pull (party plan Bucket 3): "camp here" plants a fixed anchor at the leader's feet; the party holds
@@ -425,6 +454,7 @@ public class PhantomPartyManager
 		boolean ccLookedUp;
 		long lastCcAt; // NUKER: floor between CC casts
 		List<Integer> parkedAutoSkills; // ARCHER: auto-skills parked while MP-saving (plain shots only)
+		boolean bowResting; // ARCHER: holding fire to recover MP because a bow shot's MP cost can't be met (hysteresis)
 		int lastAssistTargetId; // ARCHER: the assist target it last committed to...
 		long assistSwitchGate; // ...and the human beat before swinging onto a new one
 		long easeUntil; // DPS: holding fire after ripping raid aggro off the tank
@@ -433,6 +463,11 @@ public class PhantomPartyManager
 		long rearMoveAt; // DAGGER: when it last started sliding behind the target
 		int rearTargetId; // ...which target that was, so the give-up counter resets on a new fight
 		int rearTries; // blocked rear attempts on the current target; past a few, fight from the front
+		final PhantomPlaystyleEngine.PlayState play = new PhantomPlaystyleEngine.PlayState(); // per-class combat playstyle runtime (entries resolve lazily)
+		long lastPeelControlAt; // ARCHER/NUKER: when it last stunned/slowed something that was on it
+		long peelMoveAt; // ...and when it last stepped away from it, so kite moves aren't re-issued every tick
+		Skill peelControl; // lazy: the control skill it peels with (Stunning Shot / Sleep / Root ...)
+		boolean peelControlLookedUp;
 
 		Member(Player npc, PartyRole role)
 		{
@@ -576,6 +611,7 @@ public class PhantomPartyManager
 		member.owner = leader;
 		member.pendingSince = System.currentTimeMillis();
 		parkPanicButtons(member);
+		PhantomPlaystyleEngine.parkAutoSkills(npc, member.play, recruit.role.name()); // the playstyle engine owns offensive casting + listed panic/limit self-buffs
 		_members.put(npc.getObjectId(), member);
 		startTicking();
 		npc.setRunning();
@@ -713,6 +749,7 @@ public class PhantomPartyManager
 			member.owner = owner;
 			member.pendingSince = System.currentTimeMillis();
 			parkPanicButtons(member);
+			PhantomPlaystyleEngine.parkAutoSkills(friend, member.play, role.name()); // restored by restoreAutoSkills when the friend is released
 			_members.put(friend.getObjectId(), member);
 		}
 		return onInvited(owner, friend);
@@ -1090,7 +1127,15 @@ public class PhantomPartyManager
 				deliver(state, "buffing " + named.getName());
 				return true;
 			}
-			if (containsAny(text, "rebuff", "buff me", "buff us", "buff", "rebuf"))
+			// Group phrasings ("rebuff", "buff us") recast the WHOLE party's kits, not just the leader's - a real
+			// buffer asked to "rebuff" tops up everyone. "buff me" stays leader-only (see below).
+			if (!text.contains("buff me") && containsAny(text, "rebuff", "buff us", "rebuf"))
+			{
+				startRebuff(state, partyTargets(state));
+				deliver(state, "rebuffing everyone");
+				return true;
+			}
+			if (containsAny(text, "buff me", "buff", "rebuf"))
 			{
 				startRebuff(state, new ArrayList<>(List.of(state.owner))); // recast the leader's whole kit over the next ticks
 				deliver(state, "rebuffing");
@@ -1852,17 +1897,25 @@ public class PhantomPartyManager
 		}
 
 		// Cast watchdog: a clientless caster can wedge with its casting flag stuck; abort an over-long cast so the
-		// member recovers instead of freezing (stops buffing/healing AND following).
+		// member recovers instead of freezing (stops buffing/healing AND following). The limit tracks the LIVE skill's
+		// own expected duration (hit + cool time is the pre-haste ceiling; casting speed only shortens it) plus a
+		// margin, floored at 6s - so a legitimate slow cast (base Resurrection 6s, Group/Greater Group Heal 7s) runs
+		// to completion instead of being aborted at a flat 6s, while a truly stuck flag (which never clears) still trips.
 		if (npc.isCastingNow())
 		{
 			if (state.castSince == 0)
 			{
 				state.castSince = now;
 			}
-			else if ((now - state.castSince) > 6000)
+			else
 			{
-				npc.abortCast();
-				state.castSince = 0;
+				final Skill casting = npc.getLastSkillCast();
+				final long limit = (casting == null) ? CAST_WATCHDOG_FLOOR_MS : Math.max(CAST_WATCHDOG_FLOOR_MS, casting.getHitTime() + casting.getCoolTime() + CAST_WATCHDOG_MARGIN_MS);
+				if ((now - state.castSince) > limit)
+				{
+					npc.abortCast();
+					state.castSince = 0;
+				}
 			}
 			return true;
 		}
@@ -1927,6 +1980,20 @@ public class PhantomPartyManager
 		if (state.role == PartyRole.ARCHER)
 		{
 			manageArcherSkills(state);
+			if (manageArcherMp(state))
+			{
+				return; // out of MP for even a bow shot - hold fire and let it regenerate
+			}
+		}
+
+		// Charge classes bank their sonic/force energy while settled and out of combat, so a pull OPENS prepared
+		// instead of building reactively - an experienced player taps up charges before engaging, and Interlude
+		// charge energy persists ~10 minutes so one pre-charge carries many pulls. Only when standing near the
+		// leader and not already fighting; mid-fight charge upkeep is the playstyle rotation's job. Whether the
+		// class even has a builder is decided by the engine (non-charge classes fall straight through).
+		if (!npc.isInCombat() && (npc.calculateDistance2D(owner) <= SUPPORT_RANGE) && prepCharges(state))
+		{
+			return;
 		}
 
 		// Camp-and-pull overrides both assist and free-hunt: the party holds at a fixed anchor and fights only what
@@ -2014,6 +2081,36 @@ public class PhantomPartyManager
 				}
 			}
 
+			// Self-preservation for the squishy ranged roles: something has latched onto us and no tank is holding
+			// it. Usually it controls/steps away and we carry on shooting the party's target; only when that is
+			// losing does the attacker become the focus. Gated on actually HAVING a party target - kiting exists to
+			// protect focus fire, so with nothing to assist there is nothing to protect and the block below simply
+			// engages the attacker instead.
+			if ((focus != null) && peels(state))
+			{
+				final Monster onMe = attackerOnMe(state, focus);
+				if (onMe != null)
+				{
+					if (shouldEscalatePeel(state, onMe))
+					{
+						focus = onMe;
+					}
+					else if (peelDefend(state, onMe))
+					{
+						return; // disengaging this tick - engaging now would cancel the move
+					}
+				}
+			}
+
+			// Nothing to assist - the leader's target just died, or they have none. The "don't break focus fire"
+			// rule that keeps a member on the party's target has nothing to protect here, so with no kill target
+			// EVERY role, melee included, simply kills whatever is on it. Without this a member walks back to its
+			// formation slot between pulls while a mob chews on it, which reads as completely broken.
+			if (focus == null)
+			{
+				focus = attackerOnMe(state, null, false);
+			}
+
 			// Engage the chosen focus - the shared fight logic (raid aggro-easing, nuker CC, caster range-hold, tank
 			// threat, dagger rear, archer positioning, auto-attack upkeep), reused by camp mode. Returns false only
 			// when a mage just ran dry, so we fall through to the rest path instead of meleeing on an empty bar.
@@ -2034,8 +2131,37 @@ public class PhantomPartyManager
 			return;
 		}
 
-		// Free-hunt mode: AutoPlay drives target selection. Belt-and-braces retaliation: if a mob is already beating
-		// on this member and it still has no target, engage the attacker directly - the scanner can be slow or shy
+		// Free-hunt mode: AutoPlay drives target selection.
+		// Ranged self-preservation runs FIRST and regardless of what we're already shooting: a member that is busy
+		// killing something else while a second mob eats it is exactly the "he ignored the thing hitting him" case.
+		// Normally this controls/kites and returns null (carry on with AutoPlay's pick); a returned target means
+		// kiting is losing and it should fight that instead.
+		if (peels(state))
+		{
+			// In free hunt the "focus" is simply whatever AutoPlay currently has us on.
+			final Monster onMe = attackerOnMe(state, (npc.getTarget() instanceof Monster) ? (Monster) npc.getTarget() : null);
+			if (onMe != null)
+			{
+				if (shouldEscalatePeel(state, onMe))
+				{
+					standIfSitting(npc);
+					npc.setTarget(onMe);
+					if (!state.role.mage)
+					{
+						npc.setRunning();
+						npc.getAI().setIntention(Intention.ATTACK, onMe);
+					}
+					tryPlaystyle(state, onMe);
+					return;
+				}
+				if (peelDefend(state, onMe))
+				{
+					return;
+				}
+			}
+		}
+		// Belt-and-braces retaliation for the roles the peel logic doesn't cover (melee): if a mob is beating on this
+		// member and it still has no target, engage the attacker directly - the scanner can be slow or shy
 		// (respectful-hunt edge cases), and a member standing there being hit without answering reads as broken.
 		if ((npc.getTarget() == null) && !npc.isAttackingNow() && !npc.isCastingNow())
 		{
@@ -2052,6 +2178,16 @@ public class PhantomPartyManager
 					}
 					break;
 				}
+			}
+		}
+		// With this member's offensive AutoUse list parked (the playstyle engine owns it), free-hunt still gets
+		// its skills: play the class on whatever AutoPlay/retaliation is currently targeting.
+		if (npc.getTarget() instanceof Monster)
+		{
+			final Monster freeTarget = (Monster) npc.getTarget();
+			if (!freeTarget.isDead())
+			{
+				tryPlaystyle(state, freeTarget);
 			}
 		}
 		// Leash the member back if it wanders off; driveFollow walks it in and teleports if it is very far or stuck.
@@ -2098,6 +2234,7 @@ public class PhantomPartyManager
 				standIfSitting(npc);
 				npc.setTarget(focus);
 				positionCaster(state, focus);
+				tryPlaystyle(state, focus); // with AutoUse parked, the engine fires the class's nukes/debuffs
 				return true;
 			}
 			npc.setTarget(null);
@@ -2124,6 +2261,13 @@ public class PhantomPartyManager
 			return true;
 		}
 		if ((state.role == PartyRole.DAGGER) && positionRear(state, focus))
+		{
+			return true;
+		}
+		// Class playstyle: the first listed skill whose moment has come (opener from the rear, a banked-charge
+		// spender, a pack AoE, a healer-gated limit). Firing one skips the attack re-issue this tick; the swing
+		// resumes next tick.
+		if (tryPlaystyle(state, focus))
 		{
 			return true;
 		}
@@ -2661,9 +2805,11 @@ public class PhantomPartyManager
 	}
 
 	/**
-	 * Holds a nuker at casting range of the assist target so AutoUse can nuke it, instead of letting a physical
-	 * ATTACK intention drag it into melee. Walks in when too far, backs off when too close; stands still (lets the
-	 * cast happen) once already in the band. Mirrors the free-roam mage positioning in {@link PhantomManager}.
+	 * Holds a nuker within casting range of the assist target so AutoUse can nuke it, instead of letting a physical
+	 * ATTACK intention drag it into melee. Walks IN (spread) when out of range; once inside range it stands and
+	 * casts and does <b>not</b> back off as the mob closes - a caster that retreats every time its own kill target
+	 * steps toward it kites indefinitely and wanders into fresh mobs. Peeling a <i>different</i> mob that latched
+	 * onto it is the bounded {@link #kiteAwayFrom}. Mirrors the free-roam mage positioning in {@link PhantomManager}.
 	 */
 	private void positionCaster(Member state, Monster target)
 	{
@@ -2679,17 +2825,17 @@ public class PhantomPartyManager
 		double dx = npc.getX() - target.getX();
 		double dy = npc.getY() - target.getY();
 		double distance = Math.hypot(dx, dy);
-		if (Math.abs(distance - CASTER_CAST_RANGE) <= CASTER_RANGE_TOLERANCE)
+		if (distance <= (CASTER_CAST_RANGE + CASTER_RANGE_TOLERANCE))
 		{
-			return; // already in position - stand still so AutoUse can cast
+			return; // within casting range - stand and cast; never back off just because it closed in
 		}
 		if (distance < 1)
 		{
 			distance = 1;
 		}
-		// AoE spread: offset each caster sideways by a fixed per-member amount so several don't stack on one tile and
-		// all eat the same boss AoE. The offset is perpendicular to the target line and stable per member (objId),
-		// so it fans them out around the boss without jittering.
+		// Too far to cast: close the gap. AoE spread offsets each caster sideways by a fixed per-member amount so
+		// several don't stack on one tile and all eat the same boss AoE. The offset is perpendicular to the target
+		// line and stable per member (objId), so it fans them out around the boss without jittering.
 		final double perp = Math.atan2(dy, dx) + (Math.PI / 2);
 		final int lateral = (((npc.getObjectId() % 5) - 2) * CASTER_SPREAD_STEP); // -2..+2 lanes
 		final int standX = target.getX() + (int) ((dx / distance) * CASTER_CAST_RANGE) + (int) (Math.cos(perp) * lateral);
@@ -3107,6 +3253,28 @@ public class PhantomPartyManager
 			}
 			state.parkedAutoSkills = null;
 		}
+		if (state.play.parkedIds != null)
+		{
+			for (Integer id : state.play.parkedIds)
+			{
+				if (!npc.getAutoUseSettings().getAutoSkills().contains(id))
+				{
+					npc.getAutoUseSettings().getAutoSkills().add(id);
+				}
+			}
+			state.play.parkedIds = null;
+		}
+		if (state.play.parkedBuffIds != null)
+		{
+			for (Integer id : state.play.parkedBuffIds)
+			{
+				if (!npc.getAutoUseSettings().getAutoBuffs().contains(id))
+				{
+					npc.getAutoUseSettings().getAutoBuffs().add(id);
+				}
+			}
+			state.play.parkedBuffIds = null;
+		}
 	}
 
 	/**
@@ -3156,8 +3324,10 @@ public class PhantomPartyManager
 
 	/**
 	 * ARCHER skill discipline: below the park mark its offensive skills are pulled out of AutoUse (stashed on the
-	 * member) so it plinks with plain soulshotted auto-shots - which cost no MP - instead of dumping every skill
-	 * off cooldown into an empty bar; restored once MP recovers. Both marks are hysteresis so it doesn't flap.
+	 * member) so it plinks with plain soulshotted auto-shots - which cost only a small per-shot bow MP, far less
+	 * than dumping every skill off cooldown - instead of emptying the bar; restored once MP recovers. Both marks
+	 * are hysteresis so it doesn't flap. (True MP starvation, where even a bow shot can't be paid for, is handled
+	 * separately by {@link #manageArcherMp}.)
 	 */
 	private static void manageArcherSkills(Member state)
 	{
@@ -3179,6 +3349,42 @@ public class PhantomPartyManager
 			}
 			state.parkedAutoSkills = null;
 		}
+	}
+
+	/**
+	 * ARCHER MP starvation fallback, independent of Recharge. A bow shot consumes MP and simply FAILS when the
+	 * archer can't pay it ({@code Creature.doAttack}), so at that point it stops attacking and holds fire to let
+	 * MP regenerate instead of spamming failed shots at a live target; it resumes once a few shots' worth is back
+	 * (hysteresis). A support's Recharge, when present, refills faster and ends the rest sooner.
+	 * @return {@code true} while holding fire - the caller skips acting this tick
+	 */
+	private static boolean manageArcherMp(Member state)
+	{
+		final Player npc = state.npc;
+		final Weapon bow = npc.getActiveWeaponItem();
+		final int shotCost = (bow == null) ? 0 : bow.getMpConsume();
+		if (shotCost <= 0) // not a bow, or a bow with no MP cost - nothing to starve on
+		{
+			state.bowResting = false;
+			return false;
+		}
+		final int mp = (int) npc.getCurrentMp();
+		if (state.bowResting)
+		{
+			if (mp >= (shotCost * BOW_REST_RESUME_SHOTS)) // enough for a short burst - resume firing
+			{
+				state.bowResting = false;
+				return false;
+			}
+			return true; // still recovering
+		}
+		if (mp < shotCost) // can't afford even one shot: stop so MP regenerates rather than failing attacks
+		{
+			state.bowResting = true;
+			npc.getAI().setIntention(Intention.IDLE);
+			return true;
+		}
+		return false;
 	}
 
 	/**
@@ -3350,6 +3556,489 @@ public class PhantomPartyManager
 		return false;
 	}
 
+	// ===== Ranged self-preservation: peel, kite, escalate =====
+
+	/**
+	 * The live monster currently chewing on this member, or {@code null}. Only counts a mob that has actually
+	 * settled its hate on us - a mob merely standing nearby, or one the tank is holding, is not our problem.
+	 */
+	private Monster attackerOnMe(Member state, Monster focus)
+	{
+		return attackerOnMe(state, focus, true);
+	}
+
+	/** The party's current kill target - the leader's live monster target - so a support won't CC the mob being killed. */
+	private Monster leaderFocus(Member state)
+	{
+		final Player owner = state.owner;
+		if (owner == null)
+		{
+			return null;
+		}
+		final WorldObject t = owner.getTarget();
+		return ((t instanceof Monster) && !((Monster) t).isDead()) ? (Monster) t : null;
+	}
+
+	/**
+	 * As {@link #attackerOnMe(Member, Monster)}, but {@code deferToTank} can be turned off. Deferring is right
+	 * while the party is killing something (the tank taunts the add, everyone else keeps focus-firing), and wrong
+	 * when there is no kill target at all - then everybody piling onto the loose mob is exactly what should happen.
+	 */
+	private Monster attackerOnMe(Member state, Monster focus, boolean deferToTank)
+	{
+		final Player npc = state.npc;
+		final Member tank = deferToTank ? findTankState(state) : null;
+		for (Monster mob : World.getInstance().getVisibleObjectsInRange(npc, Monster.class, DANGER_RANGE))
+		{
+			if (mob.isDead() || (mob.getMostHated() != npc))
+			{
+				continue;
+			}
+			// A RAID on us is not a peel problem: it can't be slept/rooted, it outruns any kite, and turning on it
+			// is the opposite of what we want. easeAggro already handles it - hold fire so the tank can taunt back.
+			if (mob.isRaid())
+			{
+				continue;
+			}
+			// The mob we are already killing is not a problem to solve - we are handling it by shooting it. This
+			// also stops a nuker sleeping its own kill target, which would throw away the party's damage.
+			if (mob == focus)
+			{
+				continue;
+			}
+			// A live tank close enough to taunt it will pull it off us (maintainThreat scans THREAT_SCAN_RANGE for
+			// exactly this) - give it the moment rather than both of us reacting.
+			if ((tank != null) && (tank.npc.calculateDistance2D(mob) <= THREAT_SCAN_RANGE))
+			{
+				continue;
+			}
+			return mob;
+		}
+		return null;
+	}
+
+	/** The best control skill this member can peel with, resolved once (archers stun/slow, casters sleep/root). */
+	private Skill peelControl(Member state)
+	{
+		if (!state.peelControlLookedUp)
+		{
+			state.peelControlLookedUp = true;
+			final Player npc = state.npc;
+			final int[] candidates = (state.role == PartyRole.ARCHER) //
+				? new int[]
+				{
+					STUNNING_SHOT_ID,
+					HAMSTRING_SHOT_ID
+				} //
+				: new int[]
+				{
+					SLEEP_ID,
+					DRYAD_ROOT_ID
+				};
+			for (int id : candidates)
+			{
+				final Skill known = npc.getKnownSkill(id);
+				if (known != null)
+				{
+					state.peelControl = known;
+					break;
+				}
+			}
+		}
+		return state.peelControl;
+	}
+
+	/**
+	 * {@code true} if this member is one of the squishy ranged roles that should look after itself. Melee are built
+	 * to eat hits, and peeling them off a kill target is bad play, so they are deliberately excluded.
+	 */
+	private static boolean peels(Member state)
+	{
+		return (state.role == PartyRole.ARCHER) || (state.role == PartyRole.NUKER);
+	}
+
+	/**
+	 * {@code true} when kiting is no longer the right answer and the member should just kill what is on it: it is
+	 * losing the exchange (own HP under {@link #PEEL_SELF_HP_PERCENT}), or the attacker is nearly dead anyway
+	 * ({@link #PEEL_EXECUTE_PERCENT}) so finishing it is quicker than fleeing it. Survival outranks focus fire.
+	 */
+	private boolean shouldEscalatePeel(Member state, Monster attacker)
+	{
+		final boolean escalate = (state.npc.getCurrentHpPercent() < PEEL_SELF_HP_PERCENT) || (attacker.getCurrentHpPercent() <= PEEL_EXECUTE_PERCENT);
+		if (escalate && DEBUG)
+		{
+			dbg("PEEL " + roleLabel(state.npc) + " '" + state.npc.getName() + "' turns on '" + attacker.getName() + "' (self " + state.npc.getCurrentHpPercent() + "% HP, it " + attacker.getCurrentHpPercent() + "%)");
+		}
+		return escalate;
+	}
+
+	/**
+	 * Breaks contact with the mob on us WITHOUT giving up the party's kill target - a real ranged player controls
+	 * and steps away rather than dropping focus fire every time something touches them. Control first (stun/slow
+	 * for an archer, sleep/root for a caster, on a cooldown so it is a disengage and not a stun-lock), otherwise a
+	 * step back out of its reach.
+	 * @return {@code true} if it acted this tick - the caller must NOT then engage the assist target, because
+	 *         re-issuing an ATTACK intention would cancel the disengage move it just ordered
+	 */
+	private boolean peelDefend(Member state, Monster attacker)
+	{
+		final Player npc = state.npc;
+		final long now = System.currentTimeMillis();
+		final Skill control = peelControl(state);
+		if ((control != null) && ((now - state.lastPeelControlAt) >= PEEL_CONTROL_COOLDOWN_MS) && castable(npc, control) //
+			&& !attacker.isSleeping() && !attacker.isRooted() && (npc.calculateDistance2D(attacker) <= control.getCastRange()))
+		{
+			if (!readyToCast(npc))
+			{
+				return true; // standing up first; retry next tick
+			}
+			state.lastPeelControlAt = now;
+			if (DEBUG)
+			{
+				dbg("PEEL " + roleLabel(npc) + " '" + npc.getName() + "' casts " + control.getName() + " on '" + attacker.getName() + "' to break contact");
+			}
+			npc.setTarget(attacker);
+			npc.doCast(control);
+			return true;
+		}
+		return kiteAwayFrom(state, attacker);
+	}
+
+	/**
+	 * Steps a ranged member directly away from {@code threat}, throttled so it doesn't re-path every tick.
+	 * @return {@code true} if a disengage move was issued (or one is still running) - the caller must skip
+	 *         engaging, since an ATTACK intention would cancel it
+	 */
+	private boolean kiteAwayFrom(Member state, Monster threat)
+	{
+		final Player npc = state.npc;
+		final long now = System.currentTimeMillis();
+		if (npc.isCastingNow() || npc.isMovementDisabled())
+		{
+			return false; // let the cast finish / can't move anyway - keep fighting normally
+		}
+		if ((now - state.peelMoveAt) < PEEL_MOVE_GRACE)
+		{
+			return true; // a step is already running - don't stomp it with an attack order
+		}
+		double dx = npc.getX() - threat.getX();
+		double dy = npc.getY() - threat.getY();
+		double distance = Math.hypot(dx, dy);
+		final int desired = (state.role == PartyRole.ARCHER) ? archerHoldRange(state) : CASTER_CAST_RANGE;
+		if (distance >= desired)
+		{
+			return false; // already out of its face - nothing to do but keep firing at the party's target
+		}
+		if (distance < 1)
+		{
+			// Standing on top of us: pick any direction rather than divide by zero.
+			dx = 1;
+			dy = 0;
+			distance = 1;
+		}
+		// One SHORT step directly away, capped so it never snaps onto a distant ring: open the gap by at most
+		// KITE_STEP_MAX per tick and re-evaluate next tick. A player backs off a step at a time, it does not
+		// teleport to a fixed radius. Never overshoot past the range it actually wants (desired + a small margin).
+		final int step = (int) Math.min(KITE_STEP_MAX, (desired - distance) + PEEL_STEP_BACK);
+		final int standX = npc.getX() + (int) ((dx / distance) * step);
+		final int standY = npc.getY() + (int) ((dy / distance) * step);
+		// Never kite out of the party's cleared bubble - backing into unexplored ground is exactly how a kite pulls
+		// fresh mobs. If this step would take it too far from the leader, don't move: hold here and keep working the
+		// assist target (and once its own HP drops, shouldEscalatePeel turns it on the attacker instead of fleeing).
+		final Player owner = state.owner;
+		if ((owner != null) && (Math.hypot((double) standX - owner.getX(), (double) standY - owner.getY()) > KITE_MAX_FROM_PARTY))
+		{
+			return false;
+		}
+		state.peelMoveAt = now;
+		if (DEBUG)
+		{
+			dbg("PEEL " + roleLabel(npc) + " '" + npc.getName() + "' steps back from '" + threat.getName() + "' (was " + (int) distance + " away, capped step " + step + ")");
+		}
+		npc.setRunning();
+		npc.getAI().setIntention(Intention.MOVE_TO, GeoEngine.getInstance().getValidLocation(npc, new Location(standX, standY, npc.getZ())));
+		return true;
+	}
+
+	/**
+	 * Self-preservation for a SUPPORT (healer/buffer). The support's answer to being attacked is the opposite of
+	 * the ranged DD's: it never fights back (its damage is irrelevant and hitting things makes more hate), and it
+	 * retreats <b>towards</b> its protector rather than away - running off alone would drag it out of heal range,
+	 * whereas dragging the mob to the tank/melee is exactly how a human support survives without a tank holding it.
+	 * <ol>
+	 * <li><b>Disable</b> it - sleep/root/trance, whatever this class actually knows.</li>
+	 * <li><b>Fall back</b> to the tank (or the nearest melee, or the leader), so someone who can take the hit does.</li>
+	 * </ol>
+	 * @return {@code true} if it acted this tick - the caller returns, since re-issuing routine upkeep would cancel
+	 *         the retreat move
+	 */
+	private boolean supportDefend(Member state)
+	{
+		final Player npc = state.npc;
+		// Resolve the party's current kill target (the leader's monster target) and pass it in, so the "don't control
+		// the mob we're killing" exclusion in attackerOnMe actually applies - otherwise a healer that pulled hate off
+		// the focus could Sleep/Root it and throw away the party's focus damage (or wake a sleeper it just controlled).
+		final Monster attacker = attackerOnMe(state, leaderFocus(state));
+		if (attacker == null)
+		{
+			return false;
+		}
+		// (1) Shut it down if this class knows how. Never the party's kill target (that would throw away the
+		// party's damage) - attackerOnMe already excludes a focus, and a slept mob is skipped below.
+		final long now = System.currentTimeMillis();
+		final Skill control = supportControl(state);
+		if ((control != null) && ((now - state.lastPeelControlAt) >= PEEL_CONTROL_COOLDOWN_MS) && castable(npc, control) //
+			&& !attacker.isSleeping() && !attacker.isRooted() && (npc.calculateDistance2D(attacker) <= control.getCastRange()) && PhantomBuffs.canAffordReagent(npc, control))
+		{
+			if (!readyToCast(npc))
+			{
+				return true; // getting up first
+			}
+			state.lastPeelControlAt = now;
+			if (DEBUG)
+			{
+				dbg("PEEL " + roleLabel(npc) + " '" + npc.getName() + "' casts " + control.getName() + " on '" + attacker.getName() + "' that is attacking it");
+			}
+			npc.setTarget(attacker);
+			npc.doCast(control);
+			return true;
+		}
+		// (2) Retreat to whoever can take it off us. Not away into open ground - a support that runs off is a
+		// support out of range, and the mob follows it anyway.
+		return fallBackToProtector(state, attacker);
+	}
+
+	/** The disable a support peels with, resolved once: Sleep, Dryad Root, Trance or the Orc Dreaming Spirit. */
+	private Skill supportControl(Member state)
+	{
+		if (!state.peelControlLookedUp)
+		{
+			state.peelControlLookedUp = true;
+			for (int id : SUPPORT_CONTROL_PRIORITY)
+			{
+				final Skill known = state.npc.getKnownSkill(id);
+				if (known != null)
+				{
+					state.peelControl = known;
+					break;
+				}
+			}
+		}
+		return state.peelControl;
+	}
+
+	/**
+	 * Walks a support back to the party member best able to take the mob off it - the tank first, then any melee,
+	 * then the leader. Throttled like the ranged kite so it doesn't re-path every tick.
+	 * @return {@code true} if a retreat move was issued or is still running
+	 */
+	private boolean fallBackToProtector(Member state, Monster threat)
+	{
+		final Player npc = state.npc;
+		final long now = System.currentTimeMillis();
+		if (npc.isCastingNow() || npc.isMovementDisabled())
+		{
+			return false;
+		}
+		if ((now - state.peelMoveAt) < PEEL_MOVE_GRACE)
+		{
+			return true; // already moving - don't stomp it
+		}
+		Player protector = null;
+		int bestDistance = Integer.MAX_VALUE;
+		for (Member m : _members.values())
+		{
+			if ((m.owner != state.owner) || (m.npc == npc) || m.npc.isDead() || m.isSupport())
+			{
+				continue;
+			}
+			final int distance = (int) npc.calculateDistance2D(m.npc);
+			// A tank is always the right answer; otherwise take the closest body that fights in melee.
+			if (m.role == PartyRole.TANK)
+			{
+				protector = m.npc;
+				break;
+			}
+			if (((m.role == PartyRole.WARRIOR) || (m.role == PartyRole.DAGGER) || (m.role == PartyRole.MONK)) && (distance < bestDistance))
+			{
+				bestDistance = distance;
+				protector = m.npc;
+			}
+		}
+		if ((protector == null) && (state.owner != null) && !state.owner.isDead())
+		{
+			protector = state.owner; // no melee in the party - the human player is the only body available
+		}
+		if ((protector == null) || (npc.calculateDistance2D(protector) <= PROTECTOR_REACHED_RANGE))
+		{
+			return false; // nobody to hide behind, or already there - carry on supporting and hope the heal outpaces it
+		}
+		state.peelMoveAt = now;
+		if (DEBUG)
+		{
+			dbg("PEEL " + roleLabel(npc) + " '" + npc.getName() + "' falls back to " + describe(protector) + " with '" + threat.getName() + "' on it");
+		}
+		npc.setRunning();
+		npc.getAI().setIntention(Intention.MOVE_TO, GeoEngine.getInstance().getValidLocation(npc, new Location(protector.getX(), protector.getY(), protector.getZ())));
+		return true;
+	}
+
+	// ===== Class playstyle (data-driven per-class combat, PhantomPlaystyles.xml) =====
+
+	/**
+	 * MP floor below which a member stops spending on playstyle skills (PANIC/LIMIT are exempt - a panic
+	 * button is exactly what a nearly-dry member should still be able to press).
+	 * <p>
+	 * What a member does BELOW its floor differs by role, and the floors are picked to match: a melee or
+	 * archer keeps auto-attacking (much cheaper than skills, so it still contributes and its MP regenerates back
+	 * over the floor on its own - a bow's small per-shot MP is handled at the true-starvation end by
+	 * {@link #manageArcherMp}), while a caster stops entirely and sits to recharge. So a caster's floor is
+	 * pinned to {@link #CASTER_MIN_MP} - the same mark at which {@code engageFocus} drops its target and
+	 * hands it to {@code restForMp} - otherwise it would spend the gap between the two standing at cast
+	 * range doing nothing at all.
+	 */
+	private static int mpReserve(PartyRole role)
+	{
+		if (role == PartyRole.ARCHER)
+		{
+			return ARCHER_SKILL_PARK_MP; // 30%: back to plain soulshotted bow fire (cheap per-shot MP; manageArcherMp guards true starvation)
+		}
+		return role.mage ? CASTER_MIN_MP : 10; // a caster casts right down to the mark where it sits to rest
+	}
+
+	/**
+	 * Whether SOMEONE in this member's party could actually rescue it from a self-endangering LIMIT - the gate for
+	 * those skills. Scans the whole roster, not just recruited HEALER members: the human leader counts (on an offline
+	 * server they are often a healer class standing in range), and so does any secondary healer (a support with a
+	 * usable heal). "Ready" still means the candidate is alive, within {@link #SUPPORT_RANGE}, has meaningful MP, can
+	 * act, and holds a usable targeted heal - the same range / MP / disabled-state bar as before, now roster-wide.
+	 */
+	private boolean healerReady(Member state)
+	{
+		// The human leader first - the cheapest check and the one the old role-only scan missed entirely.
+		if (isReadyHealer(state.npc, state.owner))
+		{
+			return true;
+		}
+		for (Member m : _members.values())
+		{
+			if ((m.owner != state.owner) || !m.partied || (m.npc == state.npc))
+			{
+				continue; // other party's member, not yet partied, or this member itself (it can't heal its own limit)
+			}
+			if (isReadyHealer(state.npc, m.npc))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** A candidate that could answer a LIMIT endangering {@code endangered}: alive, close, MP left, able to act, and holding a usable party heal. */
+	private boolean isReadyHealer(Player endangered, Player candidate)
+	{
+		if ((candidate == null) || candidate.isDead() || (candidate.getCurrentMpPercent() <= 25))
+		{
+			return false;
+		}
+		if (endangered.calculateDistance2D(candidate) > SUPPORT_RANGE)
+		{
+			return false;
+		}
+		// Can't act (stunned/rooted-out/paralyzed/all skills disabled) - can't answer a limit in time.
+		if (candidate.isAllSkillsDisabled() || candidate.isStunned() || candidate.isSleeping() || candidate.isParalyzed())
+		{
+			return false;
+		}
+		return hasUsablePartyHeal(candidate);
+	}
+
+	/** True if {@code p} knows a learned heal it could throw on a partner right now - targeted (not self-only), affordable, and off cooldown. */
+	private boolean hasUsablePartyHeal(Player p)
+	{
+		for (Skill skill : p.getAllSkills())
+		{
+			if ((skill == null) || !skill.hasEffectType(EffectType.HEAL, EffectType.CPHEAL))
+			{
+				continue;
+			}
+			final TargetType tt = skill.getTargetType();
+			if ((tt == TargetType.SELF) || (tt == TargetType.NONE))
+			{
+				continue; // a self-only heal can't rescue the endangered member
+			}
+			if (p.isSkillDisabled(skill) || (p.getCurrentMp() < skill.getMpConsume()))
+			{
+				continue;
+			}
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * One playstyle decision for this member against {@code focus}: asks the engine for the first listed skill
+	 * whose moment has come and hand-casts it with the usual guards. A member whose class has no playstyle (or
+	 * whose moment hasn't come) returns {@code false} and fights on with plain attacks.
+	 * @return {@code true} if a cast fired - the caller skips the attack re-issue this tick
+	 */
+	private boolean tryPlaystyle(Member state, Monster focus)
+	{
+		final Player npc = state.npc;
+		// A sitting member is resting on purpose - never stand it up just to skill (the engage paths already
+		// stood up members that are actually fighting), and a mid-cast member finishes what it started.
+		if (npc.isCastingNow() || npc.isSitting())
+		{
+			return false;
+		}
+		// A //phantom playstyle reload may have added or removed this member's playstyle since it was recruited;
+		// reconcile AutoUse ownership before deciding, so legacy auto-skills don't compete (nor leave it bare).
+		PhantomPlaystyleEngine.syncParkingIfReloaded(npc, state.play, state.role.name());
+		final PhantomPlaystyleEngine.CastAction action = PhantomPlaystyleEngine.pick(npc, focus, state.play, healerReady(state), underAttack(npc), mpReserve(state.role), state.role.name());
+		if (action == null)
+		{
+			return false;
+		}
+		if (DEBUG)
+		{
+			dbg("PLAYSTYLE '" + npc.getName() + "' (" + npc.getPlayerClass() + ") casts " + action.skill.getName() + (action.target == npc ? " on self" : " on '" + focus.getName() + "'") + " at " + npc.getCurrentHpPercent() + "% HP / " + npc.getCurrentMpPercent() + "% MP");
+		}
+		npc.setTarget(action.target);
+		npc.doCast(action.skill);
+		// Commit a once-per-target opener to the ledger ONLY now that the cast has actually launched. A doCast the
+		// core rejected (out of range, interrupted, target gone) leaves the ledger clean, so the opener retries next
+		// tick instead of being silently burned for the life of this target.
+		if (npc.isCastingNow() || npc.isCastingSimultaneouslyNow())
+		{
+			PhantomPlaystyleEngine.confirmCast(state.play, action);
+		}
+		return true;
+	}
+
+	/**
+	 * Out-of-combat charge banking for a charge class (Gladiator / Tyrant lines): if the member is standing ready
+	 * and below its authored target charge, self-cast the class's charge-builder so the next pull opens prepared.
+	 * A no-op for classes with no builder, for a member that is resting or repositioning, or once it is already
+	 * topped up (the builder stops firing, and Interlude charges then persist ~10 minutes across pulls).
+	 * @return {@code true} if a builder cast launched this tick (caller skips the rest of the tick)
+	 */
+	private boolean prepCharges(Member state)
+	{
+		final Player npc = state.npc;
+		if (npc.isSitting() || npc.isMoving())
+		{
+			return false; // resting to recover, or running to catch up - don't interrupt just to charge
+		}
+		final PhantomPlaystyleEngine.CastAction action = PhantomPlaystyleEngine.pickPrep(npc, state.play, state.role.name());
+		if (action == null)
+		{
+			return false;
+		}
+		npc.setTarget(action.target);
+		npc.doCast(action.skill);
+		return npc.isCastingNow() || npc.isCastingSimultaneouslyNow();
+	}
+
 	/** Living mobs near the tank whose most-hated is a squishy party member (aggro slipped onto a healer/caster/leader). */
 	private List<Monster> findLooseMobs(Member state)
 	{
@@ -3495,7 +4184,11 @@ public class PhantomPartyManager
 		// On-demand "heal me": one heal on the leader even at full HP.
 		if (state.healNow)
 		{
-			final Skill onDemandHeal = emergencyHeal(state);
+			Skill onDemandHeal = emergencyHeal(state);
+			if ((onDemandHeal == null) || npc.isSkillDisabled(onDemandHeal) || (npc.getCurrentMp() < onDemandHeal.getMpConsume()))
+			{
+				onDemandHeal = anyAffordableHeal(state); // low on MP - use whatever heal we can still cast
+			}
 			if ((onDemandHeal != null) && !owner.isDead() && !npc.isSkillDisabled(onDemandHeal) && (npc.getCurrentMp() >= onDemandHeal.getMpConsume()))
 			{
 				if (!readyToCast(npc))
@@ -3511,13 +4204,19 @@ public class PhantomPartyManager
 			state.healNow = false; // can't satisfy it right now
 		}
 
-		final Skill heal = emergencyHeal(state);
-		// 1) Emergency heal first. A human healer does not start a res while the live tank is at 35%. Fast heal only -
-		// a critically low member can die during a slow (5s) cast, so speed wins here even over a bigger heal.
-		if (heal != null)
+		// 1) Emergency heal first. A human healer does not start a res while the live tank is at 35%. A FAST heal is
+		// preferred - a critically low member can die during a slow (5s) cast, so speed wins over a bigger heal - but
+		// if no fast heal is affordable the healer uses whatever heal it can still pay for: a slow or cheap heal beats
+		// letting the member die (the low-MP "healing stops completely" gap).
+		final Player urgent = mostHurtBelow(state, CRITICAL_HEAL_PERCENT);
+		if (urgent != null)
 		{
-			final Player urgent = mostHurtBelow(state, CRITICAL_HEAL_PERCENT);
-			if ((urgent != null) && !npc.isSkillDisabled(heal) && (npc.getCurrentMp() >= heal.getMpConsume()))
+			Skill emg = emergencyHeal(state);
+			if ((emg == null) || npc.isSkillDisabled(emg) || (npc.getCurrentMp() < emg.getMpConsume()))
+			{
+				emg = anyAffordableHeal(state);
+			}
+			if ((emg != null) && !npc.isSkillDisabled(emg) && (npc.getCurrentMp() >= emg.getMpConsume()))
 			{
 				if (!readyToCast(npc))
 				{
@@ -3525,10 +4224,10 @@ public class PhantomPartyManager
 				}
 				if (DEBUG && raid)
 				{
-					dbg("HEAL " + npc.getName() + " -> " + roleLabel(urgent) + " '" + urgent.getName() + "' (hp " + urgent.getCurrentHpPercent() + "%) with " + heal.getName());
+					dbg("HEAL " + npc.getName() + " -> " + roleLabel(urgent) + " '" + urgent.getName() + "' (hp " + urgent.getCurrentHpPercent() + "%) with " + emg.getName());
 				}
 				npc.setTarget(urgent);
-				npc.doCast(heal);
+				npc.doCast(emg);
 				_healedThisTick.add(urgent.getObjectId());
 				return;
 			}
@@ -3588,6 +4287,14 @@ public class PhantomPartyManager
 			return;
 		}
 
+		// 2c) Save yourself. A support that dies takes the party with it, and healing generates hate, so a healer
+		// pulls mobs onto itself just by doing its job. Placed here deliberately: a dying ally (emergency heal), a
+		// disabling debuff and a res all still outrank it, but the routine upkeep below does not.
+		if (supportDefend(state))
+		{
+			return;
+		}
+
 		// 3) Recharge: an Elder/Shillien Elder refills a party caster's MP (healers first, then the tank, then other
 		// casters). During raids this runs before non-critical top-offs so the Bishop/Prophet don't hit empty before
 		// the next spike. Emergency heals above still win.
@@ -3635,18 +4342,23 @@ public class PhantomPartyManager
 		// 4) Heal. Under a raid this is pre-emptive and tank-first (a boss spike outruns reactive 60%-only healing):
 		// a critically low member is an emergency, otherwise the tank is kept topped, then the most-hurt member.
 		// Outside a raid it's the old behaviour - the most-hurt member below the normal threshold, then self.
-		if (heal != null)
+		Player worst = pickHealTarget(state, raid);
+		if ((worst == null) && (npc.getCurrentHpPercent() < SELF_HEAL_PERCENT))
 		{
-			Player worst = pickHealTarget(state, raid);
-			if ((worst == null) && (npc.getCurrentHpPercent() < SELF_HEAL_PERCENT))
-			{
-				worst = npc;
-			}
+			worst = npc;
+		}
+		if (worst != null)
+		{
 			// Use a cheap heal for a small top-off and save the big (Greater) heal for a real gap. Keeping the tank
 			// topped to 90% with Greater Battle Heal every tick was the other half of the MP drain - a 15% top-off
-			// does not need the most expensive heal in the book.
-			final Skill h = (worst == null) ? heal : chooseHeal(state, worst);
-			if ((worst != null) && (h != null) && !npc.isSkillDisabled(h) && (npc.getCurrentMp() >= h.getMpConsume()))
+			// does not need the most expensive heal in the book. If that ideal heal isn't affordable right now, drop
+			// to any heal we can still pay for - normal healing must not stop just because the big/fast heal is out.
+			Skill h = chooseHeal(state, worst);
+			if ((h == null) || npc.isSkillDisabled(h) || (npc.getCurrentMp() < h.getMpConsume()))
+			{
+				h = anyAffordableHeal(state);
+			}
+			if ((h != null) && !npc.isSkillDisabled(h) && (npc.getCurrentMp() >= h.getMpConsume()))
 			{
 				if (!readyToCast(npc))
 				{
@@ -3863,7 +4575,8 @@ public class PhantomPartyManager
 	/**
 	 * The party mana-user this support should Recharge: a HEALER first (so it can keep healing), then the TANK (so it
 	 * can keep taunting), then another caster (BUFFER/NUKER) - whichever is most starved below {@link #RECHARGE_MP_PERCENT}
-	 * and in range. Melee/archers are skipped (their MP isn't the bottleneck - they auto-attack with shots when dry).
+	 * and in range. Melee are skipped (MP isn't their bottleneck), but a bow ARCHER that has bottomed out IS topped
+	 * up: bow shots consume MP and simply fail at empty, so a starved archer would otherwise stall on a live target.
 	 */
 	private Player pickRechargeTarget(Member state, boolean raid)
 	{
@@ -3886,13 +4599,10 @@ public class PhantomPartyManager
 			{
 				continue; // Interlude Recharge cannot be used on a class that has Recharge
 			}
-			// Singers/dancers are valid Recharge targets too (retail allows it - they know no Recharge) and their
-			// songs ARE the party's damage: the Ruell SWS fought the whole raid at ~10% MP because the battery
-			// ignored it. They sit below healers/tank but with the other casters.
-			final int prio = (m.role == PartyRole.HEALER) ? 0 : (m.role == PartyRole.TANK) ? 1 : (m.isSupport() || (m.role == PartyRole.NUKER) || (m.role == PartyRole.SINGER) || (m.role == PartyRole.DANCER)) ? 2 : -1;
+			final int prio = rechargePriority(m.role, mp);
 			if (prio < 0)
 			{
-				continue; // plain melee/archer don't need recharge
+				continue; // plain melee (and a not-yet-starved archer) don't need recharge
 			}
 			final int score = (prio * 1000) + mp; // higher priority first, then the most drained
 			if (score < bestScore)
@@ -3901,7 +4611,57 @@ public class PhantomPartyManager
 				best = m.npc;
 			}
 		}
+		// The human leader was never a Recharge candidate (this loop only walks recruited members). On an offline
+		// server the human is the party's most important member, so a mana-using leader must get battery too - and by
+		// the SAME role rules as a recruited member, so it also covers a human Sword Singer / Dancer (song/dance MP)
+		// and a genuinely bow-starved human archer, not just mage classes. Recharge can't target a class that itself
+		// knows Recharge (Elder / SE), so those are excluded.
+		final Player owner = state.owner;
+		if ((owner != npc) && !owner.isDead() && (npc.calculateDistance2D(owner) <= SUPPORT_RANGE) //
+			&& (owner.getCurrentMpPercent() < threshold) && (owner.getKnownSkill(RECHARGE_ID) == null))
+		{
+			final int mp = owner.getCurrentMpPercent();
+			final int prio = rechargePriority(PhantomManager.roleForClass(owner.getPlayerClass()), mp);
+			if (prio >= 0)
+			{
+				final int score = (prio * 1000) + mp;
+				if (score < bestScore)
+				{
+					bestScore = score;
+					best = owner;
+				}
+			}
+		}
 		return best;
+	}
+
+	/**
+	 * Recharge priority for a party role given its current MP% (lower number = topped up first), or {@code -1} if
+	 * this role/state does not need battery at all. Healers first (they keep everyone alive), then the tank, then the
+	 * other mana users - caster DPS, singers and dancers (their songs/dances ARE the party's damage and they know no
+	 * Recharge), and support buffers - and finally a genuinely bow-starved archer (its MP funds plain shots, not the
+	 * party's spells, so it is last). Plain melee and a not-yet-starved archer return -1. Shared by the recruited-member
+	 * scan and the human-leader check so both are judged by the same rules.
+	 */
+	private static int rechargePriority(PartyRole role, int mp)
+	{
+		if (role == PartyRole.HEALER)
+		{
+			return 0;
+		}
+		if (role == PartyRole.TANK)
+		{
+			return 1;
+		}
+		if (role.isSupport() || (role == PartyRole.NUKER) || (role == PartyRole.SINGER) || (role == PartyRole.DANCER))
+		{
+			return 2;
+		}
+		if ((role == PartyRole.ARCHER) && (mp < ARCHER_SKILL_PARK_MP))
+		{
+			return 3;
+		}
+		return -1;
 	}
 
 	/** The recruited TANK in this healer's party (the one that should be kept topped under a raid), or {@code null}. */
@@ -4156,25 +4916,43 @@ public class PhantomPartyManager
 			return false;
 		}
 		final Player owner = state.owner;
-		// Buff SELF first (so e.g. Acumen lands and the buffer casts the rest faster), then the leader gets the
-		// full archetype-appropriate kit. Recruited bot members are deliberately NOT auto-rebuffed: they arrive
-		// pre-buffed at spawn (PhantomBuffs.applyFullBuffs) and Interlude buffs last 20 minutes (abnormalTime 1200s),
-		// far longer than any fight - so re-buffing them just drains the buffer's MP for no benefit and it enters the
-		// boss fight already a third down (the in-game complaint). Only the leader (a human, not pre-buffed) and any
-		// real human party members get ongoing upkeep; an explicit "buff all" order still tops up everyone via forceRebuff.
+		// Upkeep order, one buff per tick: SELF first (so e.g. Acumen lands and the buffer casts the rest faster),
+		// then any OTHER support classes (get them ready so they help buff too), then the human leader, then everyone
+		// else (recruited DPS/tank and any human members). Recruited members ARE maintained now - they spawn with the
+		// full kit (PhantomBuffs.applyFullBuffs mirrors the maintained kit), so upkeep finds their slots filled and
+		// casts nothing until a 20-minute buff actually lapses. That keeps "buff everyone" cheap: no full re-cast
+		// before a pull (the old MP-drain), just gap-filling as buffs expire. needsBuff/reserve still gate each cast.
 		if (castFirstMissing(state, state.npc, PhantomBuffs.Tier.SELF))
 		{
 			return true;
+		}
+		// Other support members before the rest, so the party's buffers come up first and can share the work.
+		for (Player member : partyPlayers(owner))
+		{
+			if (member == state.npc)
+			{
+				continue;
+			}
+			final Member m = _members.get(member.getObjectId());
+			if ((m != null) && m.isSupport() && castFirstMissing(state, member, PhantomBuffs.Tier.MEMBER))
+			{
+				return true;
+			}
 		}
 		if (castFirstMissing(state, owner, PhantomBuffs.Tier.LEADER))
 		{
 			return true;
 		}
-		for (Player member : owner.getParty().getMembers())
+		for (Player member : partyPlayers(owner))
 		{
-			if ((member == owner) || (member == state.npc) || _members.containsKey(member.getObjectId()))
+			if ((member == state.npc) || (member == owner))
 			{
-				continue; // skip self, the leader (done above) and pre-buffed recruited bots
+				continue;
+			}
+			final Member m = _members.get(member.getObjectId());
+			if ((m != null) && m.isSupport())
+			{
+				continue; // other supports handled in the pass above
 			}
 			if (castFirstMissing(state, member, PhantomBuffs.Tier.MEMBER))
 			{
@@ -4182,6 +4960,18 @@ public class PhantomPartyManager
 			}
 		}
 		return false;
+	}
+
+	/** The players the support keeps buffed: the leader's party if grouped, otherwise just the leader (solo). */
+	private static List<Player> partyPlayers(Player owner)
+	{
+		return owner.isInParty() ? owner.getParty().getMembers() : List.of(owner);
+	}
+
+	/** True if this buff target is a TANK (recruited role or, for the human leader, its class role) - used to withhold Berserker Spirit. */
+	private static boolean isTankTarget(Player target)
+	{
+		return PhantomManager.roleForClass(target.getPlayerClass()) == PartyRole.TANK;
 	}
 
 	/** Begins a forced (re)buff: every {@code targets} entry is owed a full archetype kit, served one cast per tick. */
@@ -4192,20 +4982,33 @@ public class PhantomPartyManager
 		state.rebuffing = !targets.isEmpty();
 	}
 
-	/** Every member of the leader's party (or just the leader if solo) - the target list for a "buff all" order. */
-	private static List<Player> partyTargets(Member state)
+	/**
+	 * The "buff all" / "rebuff" target queue, ordered to match the automatic upkeep priority: the acting support
+	 * itself first, then any OTHER support members, then the human leader, then everyone else. A plain copy of
+	 * {@code getMembers()} would follow the party-list order and could buff a DD before the party's own healers/
+	 * buffers - this guarantees the intended self -> support -> user -> members order for the explicit order too.
+	 */
+	private List<Player> partyTargets(Member state)
 	{
-		final List<Player> targets = new ArrayList<>();
 		final Player owner = state.owner;
-		if (owner.isInParty())
+		final Player self = state.npc;
+		final List<Player> source = owner.isInParty() ? owner.getParty().getMembers() : List.of(owner);
+		final Set<Player> ordered = new LinkedHashSet<>(); // preserves insertion order and de-duplicates
+		ordered.add(self); // self first, so its own kit is up and it buffs the rest at full speed
+		for (Player p : source) // then the other support classes, so the party's buffers come online early
 		{
-			targets.addAll(owner.getParty().getMembers());
+			final Member m = _members.get(p.getObjectId());
+			if ((m != null) && m.isSupport())
+			{
+				ordered.add(p);
+			}
 		}
-		else
+		if (owner != self)
 		{
-			targets.add(owner);
+			ordered.add(owner); // the human leader
 		}
-		return targets;
+		ordered.addAll(source); // everyone else, in party order (already-queued targets are skipped by the set)
+		return new ArrayList<>(ordered);
 	}
 
 	/**
@@ -4255,27 +5058,37 @@ public class PhantomPartyManager
 				continue;
 			}
 			final boolean caster = PhantomBuffs.isCaster(target);
+			final boolean tank = isTankTarget(target);
 			while (state.rebuffIdx < all.size())
 			{
 				final Skill buff = all.get(state.rebuffIdx);
-				if (PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) && !npc.isSkillDisabled(buff) && (npc.getCurrentMp() >= buff.getMpConsume()) && PhantomBuffs.canAffordReagent(npc, buff))
+				// PERMANENT skip: not part of this target's kit (wrong archetype / Berserker on a tank), or out of a
+				// reagent that won't refill on its own. Move past it so the rest of the kit still gets cast.
+				if (!PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) || (tank && PhantomBuffs.tankAvoids(buff.getId())) || !PhantomBuffs.canAffordReagent(npc, buff))
 				{
-					if (!readyToCast(npc))
-					{
-						return true; // getting up first; cast this same buff next tick (index NOT advanced, so it isn't skipped)
-					}
-					if (!PhantomBuffs.reserveBuff(target.getObjectId(), buff.getId(), npc.getObjectId(), PhantomBuffs.buffHoldMillis(buff)))
-					{
-						state.rebuffIdx++; // another support (or the buddy) is already (re)casting this exact buff - skip so it isn't doubled
-						continue;
-					}
 					state.rebuffIdx++;
-					dbgBuff(npc, target, buff, "rebuff");
-					npc.setTarget(target);
-					npc.doCast(buff);
+					continue;
+				}
+				// TEMPORARY: on cooldown or not enough MP right now. A real buffer waits and completes the requested
+				// kit rather than dropping the buff - hold on this same buff (index NOT advanced) and retry next tick.
+				if (npc.isSkillDisabled(buff) || (npc.getCurrentMp() < buff.getMpConsume()))
+				{
 					return true;
 				}
-				state.rebuffIdx++; // this buff isn't wanted/castable - move past it
+				if (!readyToCast(npc))
+				{
+					return true; // getting up first; cast this same buff next tick (index NOT advanced, so it isn't skipped)
+				}
+				if (!PhantomBuffs.reserveBuff(target.getObjectId(), buff.getId(), npc.getObjectId(), PhantomBuffs.buffHoldMillis(buff)))
+				{
+					state.rebuffIdx++; // another support (or the buddy) is already (re)casting this exact buff - skip so it isn't doubled
+					continue;
+				}
+				state.rebuffIdx++;
+				dbgBuff(npc, target, buff, "rebuff");
+				npc.setTarget(target);
+				npc.doCast(buff);
+				return true;
 			}
 			state.rebuffQueue.remove(0); // finished this target's full kit - on to the next
 			state.rebuffIdx = 0;
@@ -4294,11 +5107,12 @@ public class PhantomPartyManager
 			return false;
 		}
 		final boolean caster = PhantomBuffs.isCaster(target);
+		final boolean tank = isTankTarget(target);
 		for (Skill buff : buffs(state))
 		{
-			if (!PhantomBuffs.wanted(buff.getId(), caster, tier) || (npc.getCurrentMp() < buff.getMpConsume()) || !PhantomBuffs.canAffordReagent(npc, buff))
+			if (!PhantomBuffs.wanted(buff.getId(), caster, tier) || (tank && PhantomBuffs.tankAvoids(buff.getId())) || (npc.getCurrentMp() < buff.getMpConsume()) || !PhantomBuffs.canAffordReagent(npc, buff))
 			{
-				continue; // wrong archetype, out of MP, or out of the buff's reagent (don't loop re-casting a buff that will be rejected)
+				continue; // wrong archetype, role-inappropriate (Berserker on a tank), out of MP, or out of reagent
 			}
 			// Presence keys on the abnormal SLOT + LEVEL, not the skill id - see PhantomBuffs.needsBuff. Different
 			// buffer classes fill one slot with different skills (PD_UP is Shield 1040 / Chant of Shielding 1009 /
@@ -4339,9 +5153,15 @@ public class PhantomPartyManager
 	{
 		final Player npc = state.npc;
 		final Player owner = state.owner;
-		if (!state.isSupport() && (state.role != PartyRole.NUKER) && (state.role != PartyRole.SINGER) && (state.role != PartyRole.DANCER))
+		// ARCHER belongs in this list even though it is not a caster: in Interlude a BOW ATTACK ITSELF COSTS MP
+		// (Creature.doAttack charges the weapon's mp_consume per shot, 1 at no-grade/D up to 10 at S), and at
+		// zero MP the attack is REFUSED outright - "not enough MP", retried once a second - so a dry archer just
+		// stands there shooting nothing. MP is an archer's ammunition, not a spell budget, so it must be allowed
+		// to sit and recover like a caster. This is only ever reached with no target (between pulls), so it
+		// cannot sit down mid-fight.
+		if (!state.isSupport() && (state.role != PartyRole.NUKER) && (state.role != PartyRole.SINGER) && (state.role != PartyRole.DANCER) && (state.role != PartyRole.ARCHER))
 		{
-			return false; // plain melee roles don't sit for MP; SWS/BD do - their songs/dances run on it
+			return false; // true melee roles don't sit for MP - their auto-attack is free
 		}
 		final int mp = npc.getCurrentMpPercent();
 		// "threat" must mean "something is actually attacking ME" - not just "a monster exists nearby". While the
@@ -4785,6 +5605,28 @@ public class PhantomPartyManager
 	private Skill emergencyHeal(Member state)
 	{
 		return firstCastable(state, fastHealKit(state));
+	}
+
+	/**
+	 * Any heal the support can actually cast this moment, cheapest first - the low-MP fallback so healing never stops
+	 * while some heal remains affordable. A nearly-OOM healer that can no longer pay for Greater/Battle Heal still
+	 * casts plain Heal (or a strong heal if that is somehow all it has). Tries: cheap Heal, then a fast heal, then a
+	 * strong heal.
+	 */
+	private Skill anyAffordableHeal(Member state)
+	{
+		final Player npc = state.npc;
+		final Skill light = lightHeal(state); // Heal (1011) then Battle Heal - the cheapest per cast
+		if ((light != null) && !npc.isSkillDisabled(light) && (npc.getCurrentMp() >= light.getMpConsume()) && PhantomBuffs.canAffordReagent(npc, light))
+		{
+			return light;
+		}
+		final Skill fast = firstCastable(state, fastHealKit(state));
+		if (fast != null)
+		{
+			return fast;
+		}
+		return firstCastable(state, strongHealKit(state));
 	}
 
 	/**
