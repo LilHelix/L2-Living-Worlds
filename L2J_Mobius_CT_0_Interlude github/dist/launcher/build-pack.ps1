@@ -267,8 +267,15 @@ if (Test-Path $manifestPath) {
         $src = Join-Path $Pack $rel
         if (-not (Test-Path $src)) { $missing += $rel; continue }
         $dst = Join-Path $patchRoot $rel
-        New-Item -ItemType Directory -Path (Split-Path -Parent $dst) -Force | Out-Null
-        Copy-Item -Path $src -Destination $dst -Force
+        if (Test-Path $src -PathType Container) {
+            # A manifest entry can be a whole folder (e.g. game\data\skill icons,
+            # images). Copy-Item without -Recurse would create an EMPTY folder, so
+            # copy the whole tree via the robocopy helper instead.
+            Copy-Tree $src $dst
+        } else {
+            New-Item -ItemType Directory -Path (Split-Path -Parent $dst) -Force | Out-Null
+            Copy-Item -Path $src -Destination $dst -Force
+        }
     }
     # Fail loudly rather than silently shipping an incomplete patch.
     if ($missing.Count -gt 0) { Die ("patch-manifest.txt lists files not present in the built pack:`n  " + ($missing -join "`n  ")) }
