@@ -482,12 +482,14 @@ public class PhantomManager implements IXmlReader
 			return DPS_ROLES[Rnd.get(DPS_ROLES.length)];
 		}
 
+		// A generic "dd"/"dps" rolls only PHYSICAL damage dealers. NUKER is deliberately excluded: a caster brings its
+		// own positioning/MP needs and is not what most players expect from a plain "dd", so it comes only from an
+		// explicit "nuker"/"mage" request (PartyRole.fromToken), never from the generic roll.
 		private static final PartyRole[] DPS_ROLES =
 		{
 			WARRIOR,
 			ARCHER,
 			DAGGER,
-			NUKER,
 			MONK
 		};
 	}
@@ -509,14 +511,18 @@ public class PhantomManager implements IXmlReader
 		return valid.isEmpty() ? null : valid.get(Rnd.get(valid.size()));
 	}
 
-	/** The playable races a generic damage-dealer can be rolled from, so a bulk "N dd" call spreads across races. */
+	/**
+	 * The playable races a generic damage-dealer can be rolled from, so a bulk "N dd" call spreads across races.
+	 * Dwarves are deliberately EXCLUDED: their only damage archetype is a blunt/heavy melee that most players do not
+	 * want filling a generic DD slot - they are wanted as a spoiler, not a nuker/archer stand-in. A dwarf is still
+	 * recruited when asked for explicitly ("dwarf dd", or the "spoiler" token -> the Bounty Hunter line).
+	 */
 	private static final Race[] DPS_RACES =
 	{
 		Race.HUMAN,
 		Race.ELF,
 		Race.DARK_ELF,
-		Race.ORC,
-		Race.DWARF
+		Race.ORC
 	};
 
 	/**
@@ -2347,9 +2353,13 @@ public class PhantomManager implements IXmlReader
 	private void equipArmorSet(Player phantom, ArmorType family, CrystalType grade, int enchant, boolean wantShield)
 	{
 		final FakePlayerArmorSets.Outfit outfit = FakePlayerArmorSets.random(family, grade);
-		if (outfit == null)
+		final ItemTemplate chest = (outfit == null) ? null : ItemData.getInstance().getTemplate(outfit.chest);
+		// No set for this family/grade, OR the rolled set's chest can't actually be worn by this phantom (an
+		// academy-gated set like Clan Oath - pledgeClass condition no phantom meets - would otherwise be added to the
+		// bag and left unequipped). Sets are uniform, so the chest is a reliable proxy for the whole set. Fall back to
+		// the best per-slot pieces (body family-correct, extremities agnostic), each guarded the same way.
+		if (!canEquip(phantom, chest))
 		{
-			// No set for this family/grade - fall back to best per-slot (body family-correct, extremities agnostic).
 			for (BodyPart slot : GEAR_SLOTS)
 			{
 				if (slot == BodyPart.R_HAND)
@@ -2357,14 +2367,18 @@ public class PhantomManager implements IXmlReader
 					continue;
 				}
 				final ItemTemplate piece = bestArmor(slot, grade, family, null);
-				if (piece != null)
+				if (canEquip(phantom, piece))
 				{
 					equip(phantom, piece, enchant);
 				}
 			}
 			if (wantShield)
 			{
-				equipPiece(phantom, bestEquip(grade, item -> (item instanceof Armor) && (((Armor) item).getItemType() == ArmorType.SHIELD)), enchant);
+				final ItemTemplate shield = bestEquip(grade, item -> (item instanceof Armor) && (((Armor) item).getItemType() == ArmorType.SHIELD));
+				if (canEquip(phantom, shield))
+				{
+					equip(phantom, shield, enchant);
+				}
 			}
 			return;
 		}
@@ -2718,6 +2732,17 @@ public class PhantomManager implements IXmlReader
 			grade = (grade.ordinal() > 0) ? CrystalType.values()[grade.ordinal() - 1] : null;
 		}
 		return null;
+	}
+
+	/**
+	 * @return {@code true} if {@code phantom} can actually equip {@code t} right now - it is equipable AND all of the
+	 *         item's own equip conditions pass. Normal armor carries only a benign all-races {@code <player>} condition
+	 *         (always passes); this rejects the unmeetable social gates a phantom never satisfies (Clan Oath's academy
+	 *         {@code pledgeClass}, hero/noble/olympiad items), which would otherwise be added to the bag unequipped.
+	 */
+	private static boolean canEquip(Player phantom, ItemTemplate t)
+	{
+		return (t != null) && t.isEquipable() && t.checkCondition(phantom, phantom, false);
 	}
 
 	/** Adds a single template to the phantom's inventory and equips it. */

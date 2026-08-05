@@ -82,13 +82,18 @@ function Stop-RecordedProcesses {
     }
 
     try {
-        $records = @(Get-Content -Raw $ProcessRegistryPath | ConvertFrom-Json)
+        # Assign first, then wrap with @(). In Windows PowerShell 5.1 a multi-record
+        # array is returned by ConvertFrom-Json as a single non-enumerated object, so
+        # @(pipeline) would nest it into a one-element array and $record would bind to
+        # the inner array (making $record.Id an Object[]). Wrapping the variable flattens
+        # correctly for one record, many records, or none.
+        $records = Get-Content -Raw $ProcessRegistryPath | ConvertFrom-Json
     } catch {
         Write-Warn "Process registry is unreadable; refusing to guess which processes belong to the server."
         return
     }
 
-    foreach ($record in $records) {
+    foreach ($record in @($records)) {
         $processId = [int]$record.Id
         $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
         if (-not $process) {

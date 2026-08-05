@@ -578,9 +578,9 @@ public class FakePlayerAppearanceFactory
 		}
 		for (ItemTemplate item : ItemData.getInstance().getAllItems())
 		{
-			if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0) || !FakePlayerGearFilter.isPlayerGear(item))
+			if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0) || item.isForNpc() || !FakePlayerGearFilter.isPlayerGear(item))
 			{
-				continue; // skip pet/summon/monster gear that renders as a sack / invisible slot
+				continue; // skip pet/summon/monster gear (for_npc) that renders as a sack / invisible slot
 			}
 			final CrystalType grade = item.getCrystalType();
 			final int id = item.getId();
