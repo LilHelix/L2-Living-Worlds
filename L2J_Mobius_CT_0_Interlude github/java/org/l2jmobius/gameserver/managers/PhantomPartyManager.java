@@ -511,6 +511,7 @@ public class PhantomPartyManager
 		int pullerId; // objectId of the designated puller (0 = passive camp: hold and fight only what wanders in)
 		Monster pulling; // the mob currently being fetched/dragged home (null between runs)
 		boolean hauling; // true while running the load home, so the MOVE_TO isn't re-issued every tick (path stutter)
+		boolean pullTagged; // the current run's ranged opener (tank taunt / nuker tag) has fired - at most once per pull
 		long pullStartedAt; // when the current fetch began, for the stuck/timeout guard
 		long nextPullAt; // don't launch the next fetch until this time (the rest beat between pulls)
 
@@ -2303,6 +2304,7 @@ public class PhantomPartyManager
 		{
 			camp.pulling = null;
 			camp.hauling = false;
+			camp.pullTagged = false;
 			camp.nextPullAt = now + PULL_INTERVAL;
 		}
 
@@ -2384,11 +2386,12 @@ public class PhantomPartyManager
 		}
 		camp.pulling = prey;
 		camp.hauling = false;
+		camp.pullTagged = false;
 		camp.pullStartedAt = now;
 		standIfSitting(npc);
 		npc.setTarget(prey);
 		npc.setRunning();
-		npc.getAI().setIntention(Intention.ATTACK, prey); // run out and tag it
+		npc.getAI().setIntention(Intention.ATTACK, prey); // run out and tag it (a skill opener lands once in range, see haulBack)
 		bark(state, "You're the camp's puller and you're running out to grab " + prey.getName() + " to bring back to the party. Say it in one very short line.", "pulling, get ready");
 	}
 
@@ -2398,6 +2401,13 @@ public class PhantomPartyManager
 		final Player npc = state.npc;
 		final Monster prey = camp.pulling;
 		if (prey == null)
+		{
+			return;
+		}
+		// A pull-tag skill (tank taunt / nuker tag) is still going out - let it finish before any branch below
+		// re-issues a move or attack that would interrupt it. Physical body-pulling never trips this (auto-attack
+		// is not a cast), so it only holds for the ranged opener.
+		if (npc.isCastingNow())
 		{
 			return;
 		}
@@ -2417,7 +2427,10 @@ public class PhantomPartyManager
 		}
 		// Have a load on us (or nothing else close): run back to camp, dragging whatever aggroed. Issue the MOVE_TO
 		// once (not every tick - that re-paths and stutters the run) and only re-nudge it if the run stalls.
-		if ((mobsHating(npc) > 0) || (prey.getMostHated() == npc))
+		// camp.pullTagged: once a ranged opener has been thrown, head home IMMEDIATELY even if the tag's hate has not
+		// registered yet this tick - otherwise the body-pull branch below would run a caster INTO melee in that gap
+		// (the "stopped at range, then got dragged onto the mob mid/after cast and died" bug).
+		if ((mobsHating(npc) > 0) || (prey.getMostHated() == npc) || camp.pullTagged)
 		{
 			if (!camp.hauling || !npc.isMoving())
 			{
@@ -2427,12 +2440,82 @@ public class PhantomPartyManager
 			}
 			return;
 		}
-		// Nothing has latched on yet: keep tagging the prey until it does.
+		// Nothing has latched on yet. A ranged puller opens with a skill once it has closed to cast range - a TANK
+		// taunts, a nuker fires its use="PULL" tag - so it does not run into melee to body-pull. A puller still out of
+		// range, low on MP, or with no pull skill falls through and body-pulls exactly as before.
+		if (tryPullTag(state, camp, prey))
+		{
+			return;
+		}
 		camp.hauling = false;
 		standIfSitting(npc);
 		npc.setTarget(prey);
 		npc.setRunning();
 		npc.getAI().setIntention(Intention.ATTACK, prey);
+	}
+
+	/**
+	 * The puller's ranged pull opener, fired at most once per pull run and only once the puller is in cast range: a
+	 * TANK grabs the mob with the manager-owned taunt (Aggression - single-target, long range, hate without needing
+	 * to land damage); any other class fires the cheap single-target nuke its playstyle marks {@code use="PULL"}. This
+	 * is what makes a nuker shoot the mob instead of running into melee, and a tank pull with hate instead of its face.
+	 * Returns {@code false} - so the caller body-pulls as before - when the puller has no pull skill, is still closing,
+	 * is low on MP, or the opener is on cooldown / refused by the core.
+	 * @return {@code true} if a skill cast launched this tick (caller skips the body-pull attack re-issue)
+	 */
+	private boolean tryPullTag(Member state, Camp camp, Monster prey)
+	{
+		if (camp.pullTagged) // already opened this run - the body-pull carries it home from here
+		{
+			return false;
+		}
+		final Player npc = state.npc;
+		if (npc.isCastingNow()) // a tag launched on an earlier tick is still going out - let it finish
+		{
+			return true;
+		}
+		// TANK: pull with Aggression, which is manager-owned and so never listed in the playstyle. Resolve it lazily
+		// (the tank may not have taunted yet this session) exactly as maintainThreat does.
+		if (state.role == PartyRole.TANK)
+		{
+			resolveTaunts(state);
+			if (castable(npc, state.aggression) && (npc.calculateDistance2D(prey) <= state.aggression.getCastRange()))
+			{
+				standIfSitting(npc);
+				// Drop the run-out ATTACK pursuit BEFORE casting: it seeks melee range, and left active it drags the
+				// puller onto the mob during the cast. Stand where we are, tag, then haulBack runs the mob home.
+				npc.getAI().setIntention(Intention.IDLE);
+				npc.setTarget(prey);
+				npc.doCast(state.aggression);
+				if (npc.isCastingNow() || npc.isCastingSimultaneouslyNow())
+				{
+					camp.pullTagged = true;
+					return true;
+				}
+			}
+			return false; // out of range / on cooldown / core refused - keep closing and body-pull, retry next tick
+		}
+		// Everyone else: the class's use="PULL" tag (a cheap single-target nuke), if it has one and is in range with
+		// mana to spare. Melee and archers list none, so they body-pull as before (an archer's bow auto-shot already
+		// tags from range).
+		final PhantomPlaystyleEngine.CastAction action = PhantomPlaystyleEngine.pickPullTag(npc, prey, state.play, mpReserve(state.role), state.role.name());
+		if (action == null)
+		{
+			return false;
+		}
+		standIfSitting(npc);
+		// Drop the run-out ATTACK pursuit BEFORE casting (see the tank branch): for a caster it seeks melee range, so
+		// left active it drags her onto the mob mid-cast where she takes hits. Stand and tag from range; haulBack then
+		// runs the tagged mob back to camp.
+		npc.getAI().setIntention(Intention.IDLE);
+		npc.setTarget(action.target);
+		npc.doCast(action.skill);
+		if (npc.isCastingNow() || npc.isCastingSimultaneouslyNow())
+		{
+			camp.pullTagged = true;
+			return true;
+		}
+		return false; // core refused the cast (range/interrupt/target gone) - body-pull this tick, retry the tag next
 	}
 
 	/** Nearest live, non-raid mob within pull range of the anchor that isn't already on the puller or the party. */

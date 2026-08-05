@@ -80,11 +80,14 @@ function Register-LaunchedProcess($role, $process, $marker) {
 function Assert-NoManagedProcesses {
     if (-not (Test-Path $ProcessRegistryPath)) { return }
     try {
-        $records = @(Get-Content -Raw $ProcessRegistryPath | ConvertFrom-Json)
+        # Assign first, then wrap with @() when iterating. In Windows PowerShell 5.1
+        # ConvertFrom-Json returns a multi-record array as a single non-enumerated
+        # object, so @(pipeline) would nest it and $record would bind to the inner array.
+        $records = Get-Content -Raw $ProcessRegistryPath | ConvertFrom-Json
     } catch {
         Fail "Process registry is unreadable: $ProcessRegistryPath. Inspect or remove it before starting."
     }
-    foreach ($record in $records) {
+    foreach ($record in @($records)) {
         $existing = Get-Process -Id ([int]$record.Id) -ErrorAction SilentlyContinue
         if ($existing) {
             try { $ticks = "$($existing.StartTime.ToUniversalTime().Ticks)" } catch { $ticks = '' }

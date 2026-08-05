@@ -60,7 +60,9 @@ public class PhantomPlaystyleData implements IXmlReader
 		DEBUFF, // target weakening worth the cast only on durable targets
 		CONTROL, // stun/slow/root style interruption
 		PANIC, // self-defense at low HP while under attack (targets self)
-		LIMIT; // low-HP limit buffs (Frenzy/Zealot family): healer-gated, skill data enforces its own HP gate (targets self)
+		LIMIT, // low-HP limit buffs (Frenzy/Zealot family): healer-gated, skill data enforces its own HP gate (targets self)
+		PULL; // ranged tag the camp puller opens a pull with (a cheap single-target nuke); read ONLY by the pull
+		// hook, never by the combat rotation - so a nuker that would otherwise body-pull instead shoots the mob.
 
 		public boolean self()
 		{

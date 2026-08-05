@@ -147,7 +147,10 @@ public class PhantomPlaystyleEngine
 		int count = 0;
 		for (PlayEntry entry : playstyle.entries)
 		{
-			if (entry.appliesAt(level) && (npc.getKnownSkill(entry.skillId) != null))
+			// PULL entries are pull-only openers the combat rotation never fires, so they must not, on their own,
+			// count as "this playstyle can field something" - otherwise a class listing only a PULL tag would be
+			// parked out of AutoUse and then stand silent in a fight (pick() skips PULL).
+			if ((entry.use != Use.PULL) && entry.appliesAt(level) && (npc.getKnownSkill(entry.skillId) != null))
 			{
 				count++;
 			}
@@ -197,6 +200,12 @@ public class PhantomPlaystyleEngine
 
 		for (PlayEntry entry : entries)
 		{
+			// PULL is a pull-only opener consumed by the party manager's pull hook, never part of the combat
+			// rotation - so a manager-owned taunt or a cheap tag nuke listed for pulling is not spammed in a fight.
+			if (entry.use == Use.PULL)
+			{
+				continue;
+			}
 			// Outside its authored level window (a level 80 archer has outgrown Power Shot).
 			if (!entry.appliesAt(level))
 			{
@@ -310,6 +319,64 @@ public class PhantomPlaystyleEngine
 				return null;
 			}
 			return new CastAction(skill, npc, false, 0, entry.skillId); // self-cast; not a once-per-target ledger entry
+		}
+		return null;
+	}
+
+	/**
+	 * The ranged tag a camp puller should open a pull with, so a nuker shoots the mob instead of running into melee to
+	 * body-pull it. Returns the first {@code use="PULL"} entry that is castable on {@code prey} RIGHT NOW - learned,
+	 * inside its level window, off cooldown, affordable, and already in cast range - else {@code null} (the puller then
+	 * keeps closing and body-pulls as before). PULL entries are read only here; the combat rotation never fires them.
+	 * <p>
+	 * Range is deliberately part of the gate: the puller starts at camp, far from the prey, so this returns {@code null}
+	 * on the outbound run and only fires once the puller has closed to the tag skill's range. Below {@code mpReservePercent}
+	 * the puller skips the tag and body-pulls, so a low-MP mage does not spend its fight mana just to pull.
+	 * @param npc the puller
+	 * @param prey the mob being fetched
+	 * @param state the member's playstyle runtime state
+	 * @param mpReservePercent below this own-MP percent, tag with a skill is skipped in favour of a body-pull
+	 * @param roleName the member's party role name, used to resolve role-split lineages
+	 */
+	public static CastAction pickPullTag(Player npc, Monster prey, PlayState state, int mpReservePercent, String roleName)
+	{
+		final int classId = npc.getPlayerClass().getId();
+		state.refreshIfReloaded();
+		if (!state.lookedUp)
+		{
+			state.lookedUp = true;
+			state.playstyle = PhantomPlaystyleData.getInstance().getPlaystyle(classId, roleName);
+		}
+		if (state.playstyle == null)
+		{
+			return null;
+		}
+		final int level = npc.getLevel();
+		final int mpPercent = npc.getCurrentMpPercent();
+		for (PlayEntry entry : state.playstyle.entries)
+		{
+			if ((entry.use != Use.PULL) || !entry.appliesAt(level))
+			{
+				continue;
+			}
+			if (mpPercent < mpReservePercent)
+			{
+				return null; // too low on mana to spend on a pull tag - body-pull and keep the mana for the fight
+			}
+			final Skill skill = npc.getKnownSkill(entry.skillId);
+			if ((skill == null) || npc.isSkillDisabled(skill) || (npc.getCurrentMp() < skill.getMpConsume()) || !PhantomBuffs.canAffordReagent(npc, skill))
+			{
+				continue;
+			}
+			if (!inReach(npc, prey, skill))
+			{
+				return null; // still closing the distance - the caller body-pulls this tick and retries when in range
+			}
+			if (!skill.checkCondition(npc, prey, false))
+			{
+				continue;
+			}
+			return new CastAction(skill, prey, false, 0, entry.skillId);
 		}
 		return null;
 	}

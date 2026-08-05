@@ -702,6 +702,12 @@ public class FakePlayerChatManager implements IXmlReader
 		putClassAlias("sws", "swordsinger");
 		putClassAlias("bd", "bladedancer");
 		putClassAlias("spectral", "spectral dancer");
+		// "spoiler" is what players ask for when they want a dwarf: it names the Bounty Hunter (Scavenger) line, and
+		// the level walk resolves it to Scavenger / Bounty Hunter / Fortune Seeker for the party's level. This is the
+		// only way a dwarf now joins as a damage dealer - the generic "dd" pool no longer rolls them (see DPS_RACES).
+		putClassAlias("spoiler", "bounty hunter");
+		putClassAlias("spoil", "bounty hunter");
+		putClassAlias("bh", "bounty hunter");
 		// Build the exact-match pattern from every key (names + aliases), longest first so a multi-word class wins
 		// over a shorter substring. Trailing "s?" so a plural request ("2 bishops", "3 hawkeyes") still matches.
 		final List<String> keys = new ArrayList<>(CLASS_BY_NAME.keySet());

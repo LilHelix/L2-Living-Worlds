@@ -16,8 +16,13 @@
 	<skill> attributes:
 	  id           - skill id (level resolved from what the member learned)
 	  name         - documentation only (the id is authoritative)
-	  use          - OPENER | ROTATION | AOE | DEBUFF | CONTROL | PANIC | LIMIT
+	  use          - OPENER | ROTATION | AOE | DEBUFF | CONTROL | PANIC | LIMIT | PULL
 	                 (PANIC/LIMIT target self; LIMIT additionally needs a ready healer)
+	                 PULL is special: it is the ranged opener the CAMP PULLER uses to tag a mob (so a nuker
+	                 shoots it instead of running in to body-pull) and is read ONLY by the pull hook, never by
+	                 the combat rotation. Use a cheap single-target nuke. Its `when` is ignored - the pull hook
+	                 supplies its own gating (in cast range, and above the role's MP reserve). TANKS pull with
+	                 Aggression, which is manager-owned and handled in code, so it is NOT listed here.
 	  when         - comma-separated AND conditions:
 	                 ALWAYS, TARGET_HP_BELOW (hpBelow), TARGET_HP_ABOVE (hpAbove),
 	                 SELF_HP_BELOW (selfHpBelow), MP_ABOVE (mpAbove), MOBS_NEAR (mobsAtLeast),
@@ -106,6 +111,7 @@
 	<!-- Human Mystic (10) -> wizard AND cleric roots. Only the offense is listed (heals are
 	     manager-owned): element bolts, the HP-drain nuke, and the two early curses on durable targets. -->
 	<playstyle name="Human Mystic (base)" classIds="10">
+		<skill id="1177" name="Wind Strike"     use="PULL"     when="ALWAYS" />
 		<skill id="1168" name="Curse: Poison"   use="DEBUFF"   when="DEBUFF_MISSING,DURABLE_TARGET" />
 		<skill id="1164" name="Curse: Weakness"  use="DEBUFF"   when="DEBUFF_MISSING,DURABLE_TARGET" />
 		<skill id="1147" name="Vampiric Touch"   use="ROTATION" when="MP_ABOVE" mpAbove="30" />
@@ -115,6 +121,7 @@
 
 	<!-- Elven Mystic (25) -> spellsinger/summoner + oracle/elder roots. Wind Shackle slows atk spd. -->
 	<playstyle name="Elven Mystic (base)" classIds="25">
+		<skill id="1177" name="Wind Strike"      use="PULL"     when="ALWAYS" />
 		<skill id="1206" name="Wind Shackle"     use="CONTROL"  when="DEBUFF_MISSING,DURABLE_TARGET" paceMs="8000" />
 		<skill id="1164" name="Curse: Weakness"  use="DEBUFF"   when="DEBUFF_MISSING,DURABLE_TARGET" />
 		<skill id="1184" name="Ice Bolt"         use="ROTATION" when="MP_ABOVE" mpAbove="30" />
@@ -123,6 +130,7 @@
 
 	<!-- Dark Mystic (38) -> spellhowler/summoner + shillien oracle/elder roots. -->
 	<playstyle name="Dark Mystic (base)" classIds="38">
+		<skill id="1177" name="Wind Strike"     use="PULL"     when="ALWAYS" />
 		<skill id="1206" name="Wind Shackle"    use="CONTROL"  when="DEBUFF_MISSING,DURABLE_TARGET" paceMs="8000" />
 		<skill id="1168" name="Curse: Poison"   use="DEBUFF"   when="DEBUFF_MISSING,DURABLE_TARGET" />
 		<skill id="1147" name="Vampiric Touch"  use="ROTATION" when="MP_ABOVE" mpAbove="30" />
@@ -179,6 +187,7 @@
 
 	<!-- Human Wizard (11) -> Sorcerer / Necromancer / Warlock. Sleep (1069) is manager-owned CC. -->
 	<playstyle name="Human Wizard (1st class)" classIds="11">
+		<skill id="1177" name="Wind Strike"  use="PULL"     when="ALWAYS" />
 		<skill id="1181" name="Flame Strike" use="AOE"      when="MOBS_NEAR" mobsAtLeast="3" />
 		<skill id="1220" name="Blaze"        use="ROTATION" when="MP_ABOVE" mpAbove="35" />
 		<skill id="1274" name="Energy Bolt"  use="ROTATION" when="MP_ABOVE" mpAbove="30" />
@@ -188,6 +197,7 @@
 
 	<!-- Elven Wizard (26) -> Spellsinger / Elemental Summoner. -->
 	<playstyle name="Elven Wizard (1st class)" classIds="26">
+		<skill id="1177" name="Wind Strike"  use="PULL"     when="ALWAYS" />
 		<skill id="1181" name="Flame Strike" use="AOE"      when="MOBS_NEAR" mobsAtLeast="3" />
 		<skill id="1175" name="Aqua Swirl"   use="ROTATION" when="MP_ABOVE" mpAbove="35" />
 		<skill id="1274" name="Energy Bolt"  use="ROTATION" when="MP_ABOVE" mpAbove="30" />
@@ -197,6 +207,7 @@
 
 	<!-- Dark Wizard (39) -> Spellhowler / Phantom Summoner. -->
 	<playstyle name="Dark Wizard (1st class)" classIds="39">
+		<skill id="1177" name="Wind Strike"   use="PULL"     when="ALWAYS" />
 		<skill id="1181" name="Flame Strike"  use="AOE"      when="MOBS_NEAR" mobsAtLeast="3" />
 		<skill id="1178" name="Twister"       use="ROTATION" when="MP_ABOVE" mpAbove="35" />
 		<skill id="1266" name="Shadow Spark"  use="ROTATION" when="MP_ABOVE" mpAbove="30" />
@@ -368,6 +379,7 @@
 	<!-- Sorcerer line: fire. Element debuff first on anything durable, then pack AoEs (a real 3+ pack gets the AoE,
 	     not a single-target opener), then the single-target rotation. -->
 	<playstyle name="Archmage" classIds="12,94">
+		<skill id="1177" name="Wind Strike"       use="PULL"     when="ALWAYS" />
 		<skill id="1083" name="Surrender To Fire" use="DEBUFF"   when="DEBUFF_MISSING,DURABLE_TARGET" maxLevel="59" />
 		<skill id="1296" name="Rain of Fire"      use="AOE"      when="MOBS_NEAR" mobsAtLeast="3" />
 		<skill id="1171" name="Blazing Circle"    use="AOE"      when="MOBS_NEAR" mobsAtLeast="3" maxLevel="69" />
@@ -381,6 +393,7 @@
 	<!-- Necromancer line: Death Spike needs Cursed Bones in the inventory - Vampiric Claw is the
 	     reagent-free fallback so a boneless Soultaker still fights. -->
 	<playstyle name="Soultaker" classIds="13,95">
+		<skill id="1177" name="Wind Strike"       use="PULL"     when="ALWAYS" />
 		<skill id="1263" name="Curse Gloom"       use="DEBUFF"   when="DEBUFF_MISSING,DURABLE_TARGET" />
 		<skill id="1064" name="Silence"           use="CONTROL"  when="DEBUFF_MISSING,DURABLE_TARGET" paceMs="10000" />
 		<skill id="1170" name="Anchor"            use="CONTROL"  when="DURABLE_TARGET" paceMs="15000" />
@@ -393,6 +406,7 @@
 
 	<!-- Spellsinger line: water. Pack AoEs ahead of the single-target rotation. -->
 	<playstyle name="Mystic Muse" classIds="27,103">
+		<skill id="1177" name="Wind Strike"        use="PULL"     when="ALWAYS" />
 		<skill id="1071" name="Surrender To Water" use="DEBUFF"   when="DEBUFF_MISSING,DURABLE_TARGET" />
 		<skill id="1174" name="Frost Wall"         use="AOE"      when="MOBS_NEAR" mobsAtLeast="3" />
 		<skill id="1181" name="Flame Strike"       use="AOE"      when="MOBS_NEAR" mobsAtLeast="3" maxLevel="45" />
@@ -404,6 +418,7 @@
 
 	<!-- Spellhowler line: wind. Pack AoEs ahead of the single-target rotation. -->
 	<playstyle name="Storm Screamer" classIds="40,110">
+		<skill id="1177" name="Wind Strike"       use="PULL"     when="ALWAYS" />
 		<skill id="1074" name="Surrender To Wind" use="DEBUFF"   when="DEBUFF_MISSING,DURABLE_TARGET" />
 		<skill id="1176" name="Tempest"           use="AOE"      when="MOBS_NEAR" mobsAtLeast="3" />
 		<skill id="1181" name="Flame Strike"      use="AOE"      when="MOBS_NEAR" mobsAtLeast="3" maxLevel="45" />
