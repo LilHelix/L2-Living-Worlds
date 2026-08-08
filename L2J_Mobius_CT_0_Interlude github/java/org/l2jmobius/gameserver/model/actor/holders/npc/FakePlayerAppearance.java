@@ -66,8 +66,20 @@ public class FakePlayerAppearance
 	private int _privateStoreType = 0; // 0 = none; otherwise a PrivateStoreType id (1 sell, 3 buy...)
 	private String _storeMessage = "";
 	private boolean _sitting = false;
+	private int _clanId = 0; // 0 = unaffiliated; otherwise the live id of a bot clan this fake player belongs to
 	private List<FakePlayerStoreItem> _storeItems = Collections.emptyList();
 	private List<FakePlayerCraftItem> _craftItems = Collections.emptyList();
+
+	public int getClanId()
+	{
+		return _clanId;
+	}
+
+	public FakePlayerAppearance setClanId(int clanId)
+	{
+		_clanId = clanId;
+		return this;
+	}
 
 	public String getName()
 	{

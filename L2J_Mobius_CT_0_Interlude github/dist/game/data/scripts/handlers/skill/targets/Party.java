@@ -20,6 +20,7 @@ import java.util.LinkedList;
 import java.util.List;
 
 import org.l2jmobius.gameserver.handler.ITargetTypeHandler;
+import org.l2jmobius.gameserver.managers.PhantomPartyManager;
 import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Creature;
 import org.l2jmobius.gameserver.model.actor.Player;
@@ -67,7 +68,15 @@ public class Party implements ITargetTypeHandler
 				{
 					continue;
 				}
-				
+
+				// Project hook: keep a phantom SwordSinger/Bladedancer out of another music class's songs/dances so
+				// the party's music phantoms stop clogging each other's 12-slot pool and draining mana on re-casts.
+				// Scoped to managed music phantoms and dance/song skills only, so real players are never dropped.
+				if (PhantomPartyManager.getInstance().isExcludedMusicRecipient(skill, partyMember))
+				{
+					continue;
+				}
+
 				if (Skill.addCharacter(creature, partyMember, radius, false))
 				{
 					targetList.add(partyMember);

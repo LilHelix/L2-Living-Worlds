@@ -107,6 +107,35 @@ public final class FakePlayerChatParsing
 		return price;
 	}
 
+	/**
+	 * Resolve the unit price to actually charge for a chat-arranged deal, guarding against a weak brain model
+	 * that mangles the price in a {@code [[SHOP:...]]} tag - most often by dropping the "k", turning 14k into a
+	 * literal 14. The server-side offered price (quoted when Java armed the deal) is authoritative; the model's
+	 * tagged price is honored only when it reads as a genuine haggle, i.e. within a 4x band of the offer either
+	 * way. Anything outside that band (a dropped/added suffix, or garbage) falls back to the offered price.
+	 * @param taggedPrice the price parsed from the model's SHOP tag (after any k/kk multiplier); {@code <=0} if absent
+	 * @param offeredUnitPrice the authoritative unit price Java quoted when it armed the deal; {@code <=0} if none
+	 * @return the unit price to use
+	 */
+	public static int resolveDealPrice(int taggedPrice, int offeredUnitPrice)
+	{
+		if (offeredUnitPrice <= 0)
+		{
+			return Math.max(0, taggedPrice); // no server anchor - trust the tag
+		}
+		if (taggedPrice <= 0)
+		{
+			return offeredUnitPrice; // model gave no usable price - use the offer
+		}
+		// Genuine haggle band: within 4x of the offer either way. Outside it (dropped "k", added "k", junk) the
+		// tag is not a real negotiated price, so fall back to what Java actually quoted.
+		if ((taggedPrice >= (offeredUnitPrice / 4)) && (taggedPrice <= ((long) offeredUnitPrice * 4)))
+		{
+			return taggedPrice;
+		}
+		return offeredUnitPrice;
+	}
+
 	/** @return the level requested in an LFP shout (1-80), or 0 when none is given (match the recruiter). */
 	public static int parseLfpLevel(String text)
 	{

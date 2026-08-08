@@ -54,7 +54,10 @@ import org.l2jmobius.gameserver.model.actor.instance.Monster;
 import org.l2jmobius.gameserver.model.groups.Party;
 import org.l2jmobius.gameserver.model.groups.PartyDistributionType;
 import org.l2jmobius.gameserver.model.groups.PartyMessageType;
+import org.l2jmobius.gameserver.handler.IItemHandler;
+import org.l2jmobius.gameserver.handler.ItemHandler;
 import org.l2jmobius.gameserver.model.item.Weapon;
+import org.l2jmobius.gameserver.model.item.instance.Item;
 import org.l2jmobius.gameserver.model.item.type.WeaponType;
 import org.l2jmobius.gameserver.model.effects.EffectType;
 import org.l2jmobius.gameserver.model.skill.AbnormalType;
@@ -147,6 +150,9 @@ public class PhantomPartyManager
 	private static final long POST_RES_HOLD_MS = 6500; // after a tank battle-res, hold DPS while it is healed and regains hate
 	private static final int POST_RES_TANK_READY_PERCENT = 85;
 	private static final int RES_SKILL_ID = 1016; // Resurrection (granted to healers on spawn)
+	private static final int RES_SCROLL_ID = 737; // Scroll of Resurrection: the item a recruit carries as a fallback rez
+	private static final int RES_SCROLL_CAST_RANGE = 400; // skill 2014's cast range - a scroll-rezzer closes to this first
+	private static final int RES_SCROLL_CLAIM_MS = 16000; // hold the corpse claim across the scroll's long (~15s) cast so no second scroll is burned on it
 	private static final int AGGRESSION_ID = 28; // single-target taunt (knight tree) - "provokes a target to attack"
 	private static final int AURA_OF_HATE_ID = 18; // AoE taunt (knight tree) - "provokes nearby enemies to attack"
 	private static final int THREAT_SCAN_RANGE = 1000; // how far a tank looks for a mob loose on a squishy party member
@@ -174,11 +180,12 @@ public class PhantomPartyManager
 	// Class competence (party plan Bucket 2): songs/dances, archer discipline, tank panic button, dagger
 	// positioning, DPS aggro-easing, nuker crowd control.
 	// SWS/BD keep their FULL learned song/dance kit running (the whole point of bringing one - and legitimate to
-	// maintain mid-raid, unlike 20-minute buffs). A member re-sings when its own copy of the effect has this little
-	// time left. The rotation is no longer pinned to a fixed 3: songs and dances share the target's 12-slot music
-	// pool (MaxDanceAmount), so resolveSongs caps a member to its SHARE of that pool (see songRotationCap) - a SwS
-	// and a BD in the same party split it instead of evicting each other's music in an endless re-cast loop.
-	private static final int SONG_REFRESH_SECONDS = 15;
+	// maintain mid-raid, unlike 20-minute buffs). Unlike the 20-minute buffs (which the buffer tops up a little
+	// before they lapse), a music class re-sings ONLY once its own copy of the effect has fully expired - it lets
+	// the cycle die and then rebuilds it, so it is not paying to refresh a song that still has value. The rotation
+	// is no longer pinned to a fixed 3: songs and dances share the target's 12-slot music pool (MaxDanceAmount), so
+	// resolveSongs caps a member to its SHARE of that pool (see songRotationCap) - a SwS and a BD in the same party
+	// split it instead of evicting each other's music in an endless re-cast loop.
 	private static final int MUSIC_POOL_SLOTS = 12; // MaxDanceAmount: songs + dances share one 12-slot pool per target
 	// All Interlude songs are party buffs, so the singer auto-maintains every one it has learned (best-value first;
 	// resolveSongs filters to what it actually knows). A specific song can also be asked for by name (requestedSong).
@@ -400,6 +407,7 @@ public class PhantomPartyManager
 		boolean assist = true; // assist the leader's target (default) vs. free-hunt
 		boolean following = true;
 		boolean reminded; // already whispered "here, inv me" while waiting
+		boolean rezOnArrival; // summoned to a dead solo player: self-invite on arrival (a corpse can't answer /invite) so the rez lands at once
 		long pendingSince; // spawn time; despawn if never invited within RECRUIT_TIMEOUT
 		long graceUntil;
 		List<Skill> buffs; // lazy
@@ -563,6 +571,10 @@ public class PhantomPartyManager
 		// rolls its own level near the recruiter's (a real pickup group is never eight identical levels).
 		final boolean explicitLevel = level > 0;
 		final int requestedLevel = explicitLevel ? Math.max(1, Math.min(80, level)) : leader.getLevel();
+		// A solo player who shouts for support while lying dead can't complete the normal "invite me" handshake (a
+		// corpse has nobody to target and /invite). Capture that here so the arriving recruit self-invites and rezzes
+		// on the spot. Only the summon-time state counts; a normal live call keeps today's flow.
+		final boolean summonedWhileDead = leader.isDead();
 		int spawned = 0;
 		for (PhantomManager.Recruit recruit : recruits)
 		{
@@ -573,7 +585,7 @@ public class PhantomPartyManager
 			final PhantomManager.Recruit wanted = recruit;
 			final int order = spawned;
 			final int memberLevel = explicitLevel ? requestedLevel : spreadLevel(requestedLevel);
-			ThreadPool.schedule(() -> spawnAndApproach(leader, wanted, memberLevel), 400L + (order * SPAWN_STAGGER) + Rnd.get(300));
+			ThreadPool.schedule(() -> spawnAndApproach(leader, wanted, memberLevel, summonedWhileDead), 400L + (order * SPAWN_STAGGER) + Rnd.get(300));
 			spawned++;
 		}
 	}
@@ -594,7 +606,7 @@ public class PhantomPartyManager
 	}
 
 	/** Spawns a member out of sight near the leader and starts it walking over. */
-	private void spawnAndApproach(Player leader, PhantomManager.Recruit recruit, int level)
+	private void spawnAndApproach(Player leader, PhantomManager.Recruit recruit, int level, boolean rezOnArrival)
 	{
 		if ((leader == null) || !leader.isOnline())
 		{
@@ -610,6 +622,7 @@ public class PhantomPartyManager
 		}
 		final Member member = new Member(npc, recruit.role);
 		member.owner = leader;
+		member.rezOnArrival = rezOnArrival;
 		member.pendingSince = System.currentTimeMillis();
 		parkPanicButtons(member);
 		PhantomPlaystyleEngine.parkAutoSkills(npc, member.play, recruit.role.name()); // the playstyle engine owns offensive casting + listed panic/limit self-buffs
@@ -666,6 +679,29 @@ public class PhantomPartyManager
 	public boolean isRecruit(Player player)
 	{
 		return (player != null) && _members.containsKey(player.getObjectId());
+	}
+
+	/**
+	 * Whether {@code member} should be dropped as a recipient of a party song/dance. A party's music classes
+	 * otherwise clog each other's 12-slot music pool (a SwS's songs and a BD's dances share it), so each keeps
+	 * evicting the other's music and re-casting it - a steady mana drain. Excluding the music phantoms from each
+	 * other's (and their own kind's) songs/dances keeps their pool clear, so with the wait-for-expiry upkeep they
+	 * re-sing only when a cycle actually lapses. Scoped to managed phantom SINGER/DANCER members only, so real
+	 * players are never dropped from a party buff, and only to dance/song skills. The caster still lands its own
+	 * music on itself (the target handler adds the caster separately), so its upkeep proxy is unaffected. Called by
+	 * the {@code PARTY} target handler.
+	 * @param skill the skill being resolved
+	 * @param member a candidate party recipient
+	 * @return {@code true} to skip this recipient for a song/dance
+	 */
+	public boolean isExcludedMusicRecipient(Skill skill, Player member)
+	{
+		if ((skill == null) || (member == null) || !skill.isDance())
+		{
+			return false;
+		}
+		final Member state = _members.get(member.getObjectId());
+		return (state != null) && ((state.role == PartyRole.SINGER) || (state.role == PartyRole.DANCER));
 	}
 
 	/**
@@ -1848,6 +1884,17 @@ public class PhantomPartyManager
 		}
 		if (npc.calculateDistance2D(owner) <= ARRIVE_RANGE)
 		{
+			// Summoned to a dead solo player: skip the "invite me" handshake a corpse can't complete and bind into the
+			// party server-side (self-invite), so the rez can land at once. Gated to a still-dead summoner - if they
+			// got back up on their own before we arrived, fall through to the normal invite handshake below.
+			if (state.rezOnArrival && owner.isDead())
+			{
+				state.rezOnArrival = false;
+				if (onInvited(owner, npc)) // sets partied; the next serve() tick rezzes the dead owner (skill or scroll)
+				{
+					return;
+				}
+			}
 			if (!state.reminded)
 			{
 				state.reminded = true;
@@ -1946,6 +1993,15 @@ public class PhantomPartyManager
 			state.lowHpBarked = false;
 		}
 
+		// Emergency scroll rez, ahead of the support/combat split so a pure-DPS member reaches it too: only fires when
+		// the party has no living member that can cast Resurrection itself (an all-DPS group, or a group whose only
+		// healer is also down). A healer-led party never gets here - partyHasLiveSkillRezzer short-circuits - and the
+		// shared claim keeps a single phantom on each corpse, so scrolls are never spammed.
+		if (tryScrollRez(state, now))
+		{
+			return true;
+		}
+
 		if (state.isSupport())
 		{
 			supportTick(state, now);
@@ -1954,6 +2010,88 @@ public class PhantomPartyManager
 		{
 			combatTick(state);
 		}
+		return true;
+	}
+
+	/**
+	 * True if {@code party} still has a living member that can cast Resurrection (skill {@link #RES_SKILL_ID}) itself -
+	 * the natural rezzer, human or phantom. A scroll-carrier only steps in when this is {@code false}, so the scroll
+	 * stays a genuine last resort and the healer keeps doing the rezzing whenever one is up.
+	 */
+	private boolean partyHasLiveSkillRezzer(Party party)
+	{
+		if (party == null)
+		{
+			return false;
+		}
+		for (Player member : party.getMembers())
+		{
+			if (!member.isDead() && (member.getKnownSkill(RES_SKILL_ID) != null))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Fallback rez with a Scroll of Resurrection (item {@link #RES_SCROLL_ID} -> skill 2014), for a party that has no
+	 * living natural rezzer. Every recruit carries a small stack (see {@code PhantomManager} gear-up). Prefers a real
+	 * Resurrection whenever the party still has one alive; only an all-DPS group, or one whose healer is also down,
+	 * ever burns a scroll. Reuses {@link #findResTarget} and the shared {@link PhantomBuffs} claim so exactly one
+	 * phantom raises a given corpse. The claim is held across the scroll's long cast so a second scroll is never spent
+	 * on the same body.
+	 * @return {@code true} if the phantom committed this tick to closing on, or scroll-rezzing, a corpse
+	 */
+	private boolean tryScrollRez(Member state, long now)
+	{
+		final Player npc = state.npc;
+		final Player owner = state.owner;
+		if ((owner == null) || npc.isDead() || npc.isCastingNow())
+		{
+			return false;
+		}
+		final Party party = owner.getParty();
+		if ((party == null) || partyHasLiveSkillRezzer(party))
+		{
+			return false; // a natural rezzer is up (or will be, once raised) - leave the scrolls in the bag
+		}
+		final Item scroll = npc.getInventory().getItemByItemId(RES_SCROLL_ID);
+		if (scroll == null)
+		{
+			return false; // out of scrolls
+		}
+		final Player corpse = findResTarget(state, now); // a fallen human first, then a bot member; honours the claim
+		if (corpse == null)
+		{
+			return false;
+		}
+		if (npc.calculateDistance2D(corpse) > RES_SCROLL_CAST_RANGE)
+		{
+			// Close to scroll range first (skill 2014 reaches 400); the cast lands on a later tick once in range.
+			if (!npc.isMoving())
+			{
+				npc.setRunning();
+				npc.getAI().setIntention(Intention.MOVE_TO, new Location(corpse.getX(), corpse.getY(), corpse.getZ()));
+			}
+			return true;
+		}
+		if (!readyToCast(npc))
+		{
+			return true; // getting up first; the scroll cast lands on the next tick
+		}
+		if (!PhantomBuffs.claimRes(corpse.getObjectId(), npc.getObjectId(), RES_SCROLL_CLAIM_MS))
+		{
+			return false; // a different rezzer already has this corpse
+		}
+		final IItemHandler handler = ItemHandler.getInstance().getHandler(scroll.getEtcItem());
+		if (handler == null)
+		{
+			return false;
+		}
+		dbg("SCROLL-RES " + npc.getName() + " rezzing " + roleLabel(corpse) + " '" + corpse.getName() + "'");
+		npc.setTarget(corpse); // skill 2014 targets PC_BODY, and the item handler checks the skill condition against the current target
+		handler.onItemUse(npc, scroll, false);
 		return true;
 	}
 
@@ -3117,9 +3255,9 @@ public class PhantomPartyManager
 	/**
 	 * SWS/BD song/dance upkeep. First honours any explicit by-name request ({@link Member#pendingSong}); otherwise
 	 * resolves the member's rotation once (the role's priority list filtered to what it actually knows, capped at its
-	 * music-pool share by {@link #songRotationCap}); then each tick the first song whose effect is missing or about
-	 * to lapse on the member itself is recast on the party. Below 2nd class (no songs known yet) this costs nothing
-	 * after the first lookup.
+	 * music-pool share by {@link #songRotationCap}); then each tick the first song that has fully lapsed on the member
+	 * itself is recast on the party (it waits for the cycle to die rather than refreshing early, to save mana). Below
+	 * 2nd class (no songs known yet) this costs nothing after the first lookup.
 	 * @return {@code true} if a song is mid-cast or was just fired - the caller skips fighting this tick
 	 */
 	private boolean maintainSongs(Member state)
@@ -3170,7 +3308,10 @@ public class PhantomPartyManager
 		for (Skill song : state.songs)
 		{
 			final BuffInfo info = npc.getEffectList().getBuffInfoBySkillId(song.getId());
-			if (((info == null) || (info.getTime() <= SONG_REFRESH_SECONDS)) && castable(npc, song))
+			// Wait for the song/dance to fully lapse before rebuilding it (info == null), rather than topping it up
+			// a few seconds early like the long buffs do - letting the cycle die first is what keeps a music class's
+			// mana drain low over a long fight.
+			if ((info == null) && castable(npc, song))
 			{
 				if (!readyToCast(npc))
 				{

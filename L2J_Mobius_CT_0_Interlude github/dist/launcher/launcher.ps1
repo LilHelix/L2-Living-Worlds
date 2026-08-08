@@ -11,7 +11,13 @@
 
   Driven by Start-Server.bat in the parent (dist) folder. Nothing here touches game logic -
   it only orchestrates the pieces that already exist.
+
+  -Quiet is used by the GUI control panel: it hides the console windows (the DB
+  engine and each server run without a terminal). The plain Start-Server.bat path
+  does not pass it, so its behavior is unchanged.
 #>
+
+param([switch]$Quiet)
 
 $ErrorActionPreference = 'Stop'
 
@@ -213,6 +219,19 @@ $java = Find-Java $javaHome
 if (-not $java) { Fail "Could not find Java. Use the bundled pack, set JavaHome in launcher.ini, or install JDK 25." }
 Write-Ok "java: $java"
 
+# Quiet mode (GUI control panel): hide the console/terminal windows. The DB engine
+# has no GUI, so it runs fully hidden. The Java servers launch via javaw.exe so their
+# terminal window is gone while the in-process Swing GUI window still opens - EnableGUI
+# stays on, no headless flag. stop.ps1 still matches them: it records whatever process
+# name we launch (javaw) and verifies the jar on the command line.
+$dbWindowStyle   = if ($Quiet) { 'Hidden' } else { 'Minimized' }
+$serverLaunchExe = $java
+if ($Quiet) {
+    $javawCandidate = Join-Path (Split-Path -Parent $java) 'javaw.exe'
+    if (Test-Path $javawCandidate) { $serverLaunchExe = $javawCandidate }
+    else { Write-Info "javaw.exe not found next to java.exe; server terminals will stay visible." }
+}
+
 # ---- 2. Database engine ----------------------------------------------------
 Write-Head "2/4  Database (MySQL/MariaDB)"
 
@@ -255,11 +274,11 @@ if (Test-Port $dbPort) {
         # (e.g. "New folder") gets split and mysqld fails to start. Quoting fixes that.
         $mysqldArgLine = "--datadir=`"$dataDir`" --port=$dbPort --skip-name-resolve --console"
         Start-Process -FilePath $mysqldExe -WorkingDirectory $mysqlBin `
-            -ArgumentList $mysqldArgLine -WindowStyle Minimized | Out-Null
+            -ArgumentList $mysqldArgLine -WindowStyle $dbWindowStyle | Out-Null
     } else {
         # External engine (XAMPP etc.): start it with its own configured data dir.
         Write-Info "starting mysqld from $mysqlBin ..."
-        Start-Process -FilePath $mysqldExe -WorkingDirectory $mysqlBin -WindowStyle Minimized | Out-Null
+        Start-Process -FilePath $mysqldExe -WorkingDirectory $mysqlBin -WindowStyle $dbWindowStyle | Out-Null
     }
 
     if (Wait-Port $dbPort 60) { Write-Ok "database is up on port $dbPort" }
@@ -333,7 +352,7 @@ function Start-JavaServer($name, $workDir, $jarRelative) {
     if (Test-Path $cfgPath) { $params = (Get-Content -Raw $cfgPath).Trim() }
     $argLine = "$params -jar `"$jarRelative`""
     Write-Info "launching $name ..."
-    $serverProcess = Start-Process -FilePath $java -ArgumentList $argLine -WorkingDirectory $workDir -PassThru
+    $serverProcess = Start-Process -FilePath $serverLaunchExe -ArgumentList $argLine -WorkingDirectory $workDir -PassThru
     Register-LaunchedProcess $name $serverProcess ([System.IO.Path]::GetFileName($jarPath))
     Write-Ok "$name started (PID $($serverProcess.Id))"
 }
@@ -347,14 +366,21 @@ if ($startGame) {
 }
 
 if ($startBrain) {
-    $brainBat = Join-Path (Split-Path -Parent $DistDir) 'setup_brain.bat'
+    # The bundled pack ships the brain under dist\brain\ (setup_brain.bat lives
+    # alongside fpc_brain.py + knowledge\). A raw source checkout instead keeps
+    # setup_brain.bat at the project root, one level above dist\. Look in the
+    # pack location first, then fall back to the source layout.
+    $brainBat = Join-Path $DistDir 'brain\setup_brain.bat'
+    if (-not (Test-Path $brainBat)) {
+        $brainBat = Join-Path (Split-Path -Parent $DistDir) 'setup_brain.bat'
+    }
     if (Test-Path $brainBat) {
         Write-Info "launching FPC brain ..."
         $brainProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `"$brainBat`"" -PassThru
         Register-LaunchedProcess 'FPC Brain' $brainProcess ([System.IO.Path]::GetFileName($brainBat))
         Write-Ok "brain started (PID $($brainProcess.Id))"
     } else {
-        Write-Info "StartBrain=true but setup_brain.bat not found next to dist\ - skipping"
+        Write-Info "StartBrain=true but setup_brain.bat not found in brain\ or next to dist\ - skipping"
     }
 }
 

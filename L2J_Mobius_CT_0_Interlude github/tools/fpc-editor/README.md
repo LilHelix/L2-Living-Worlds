@@ -14,6 +14,13 @@ A standalone visual editor for `FakePlayerBehavior.xml` (NPC fake-player populat
 
 > Chrome/Edge: saves directly in place. Firefox: downloads the updated XML.
 
+## Look and feel
+
+The editor uses the same "Living World" theme as the l2admin control panel, so the two tools match.
+Use the **moon / sun** button in the top-right of the side panel to switch between **dark** and **light**;
+the choice is remembered between visits. Native dropdowns follow the theme too, so dark mode no longer
+shows a white popup list.
+
 ## Mode switch
 
 The two buttons at the top switch what you're editing:

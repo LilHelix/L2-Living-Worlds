@@ -145,6 +145,30 @@ public class CrestTable
 	}
 	
 	/**
+	 * Project hook (bot clans): finds an already-stored crest whose bytes and type match, so a synthetic bot clan
+	 * reuses its crest across reboots instead of inserting a duplicate row every boot. The crest set is tiny (a
+	 * handful per clan), so the linear scan is negligible.
+	 * @param data the crest bytes to match
+	 * @param crestType the crest type to match
+	 * @return the matching {@code Crest}, or {@code null} if none is stored yet
+	 */
+	public Crest findByData(byte[] data, CrestType crestType)
+	{
+		if (data == null)
+		{
+			return null;
+		}
+		for (Crest crest : _crests.values())
+		{
+			if ((crest.getType() == crestType) && java.util.Arrays.equals(crest.getData(), data))
+			{
+				return crest;
+			}
+		}
+		return null;
+	}
+
+	/**
 	 * Creates a {@code Crest} object and inserts it in database and cache.
 	 * @param data
 	 * @param crestType

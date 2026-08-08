@@ -107,6 +107,13 @@ else
 	else
 		record "js playstyle editor" 1
 	fi
+	echo
+	echo ">>> JavaScript: bot clans editor (tools/l2admin)"
+	if node tests/js/botclans_editor_test.js; then
+		record "js bot clans editor" 0
+	else
+		record "js bot clans editor" 1
+	fi
 fi
 
 # ---- Python brain tests ---------------------------------------------------
