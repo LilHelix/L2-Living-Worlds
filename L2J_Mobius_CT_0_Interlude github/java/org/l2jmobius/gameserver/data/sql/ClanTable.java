@@ -137,6 +137,21 @@ public class ClanTable
 	{
 		return _clans.get(clanId);
 	}
+
+	/**
+	 * Project hook (bot clans): registers an already-built, in-memory {@link Clan} so lookups by id/name and the
+	 * clan window resolve it like any other clan. Used by {@code BotClanManager} for synthetic bot clans, which are
+	 * rebuilt each boot and never stored in {@code clan_data} (only their crests, in the {@code crests} table,
+	 * persist). Does nothing if a clan with that id is already registered.
+	 * @param clan the bot clan to register
+	 */
+	public void registerClan(Clan clan)
+	{
+		if (clan != null)
+		{
+			_clans.putIfAbsent(clan.getId(), clan);
+		}
+	}
 	
 	public Clan getClanByName(String clanName)
 	{

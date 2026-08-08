@@ -65,6 +65,7 @@ import org.l2jmobius.gameserver.model.actor.appearance.PlayerAppearance;
 import org.l2jmobius.gameserver.model.actor.enums.creature.Race;
 import org.l2jmobius.gameserver.model.actor.enums.player.PlayerClass;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoPlaySettingsHolder;
+import org.l2jmobius.gameserver.model.clan.Clan;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoUseSettingsHolder;
 import org.l2jmobius.gameserver.model.actor.holders.player.ClassType;
 import org.l2jmobius.gameserver.model.actor.instance.Monster;
@@ -151,6 +152,13 @@ public class PhantomManager implements IXmlReader
 	private static final int HP_POTION_ID = 1539; // Greater Healing Potion
 	private static final int HP_POTION_COUNT = 20000;
 	private static final int HP_POTION_PERCENT = 60;
+	// Emergency rez scroll: every recruited party member carries a small stack of Scroll of Resurrection (skill 2014)
+	// so a party with no natural rezzer - an all-DPS group, or one whose only healer is also down - can still put a
+	// fallen member or the leader back up. The party brain (PhantomPartyManager) only reaches for a scroll when nobody
+	// alive can cast Resurrection itself, so a healer-led party keeps behaving exactly as before. Scrolls leave with
+	// the phantom on despawn, so nothing leaks into the economy.
+	private static final int REZ_SCROLL_ID = 737;
+	private static final int REZ_SCROLL_COUNT = 3;
 	// Buff reagents: a few support buffs consume an item per cast (the prophet's Greater Might / Greater Shield
 	// and the caster's Clarity all eat Spirit Ore, id 3031). A clientless buffer that has none silently fails the
 	// cast - the engine rejects it in checkDoCastConditions - and, since the buff never lands, re-tries it every
@@ -887,6 +895,8 @@ public class PhantomManager implements IXmlReader
 		final List<Regular> regulars = new ArrayList<>(); // fixed identities that recur in this area (authored + auto)
 		int regularCount; // how many stable regulars to auto-generate for this area (0 = none / authored only)
 		int regularChance = REGULAR_CHANCE_DEFAULT; // % chance a spawn uses a regular (only if regulars exist)
+		String botClan = ""; // "" = none, "random" = a random bot clan, else a bot clan key (BotClans.xml)
+		int botClanChance = 100; // % chance a spawned field hunter here wears botClan (only when botClan is set)
 		boolean active; // phantoms currently spawned (a real player is in range)
 		long emptySince; // when the last observer left this area (0 while a player is near)
 	}
@@ -1030,6 +1040,8 @@ public class PhantomManager implements IXmlReader
 			population.role = BuddyRole.fromString(set.getString("role", ""));
 			population.regularChance = set.getInt("regularChance", REGULAR_CHANCE_DEFAULT);
 			population.regularCount = set.getInt("regularCount", 0);
+			population.botClan = set.getString("botClan", "").trim();
+			population.botClanChance = Math.max(0, Math.min(100, set.getInt("botClanChance", 100)));
 			forEach(populationNode, "point", pointNode ->
 			{
 				final StatSet p = new StatSet(parseAttributes(pointNode));
@@ -1952,6 +1964,28 @@ public class PhantomManager implements IXmlReader
 	}
 
 	/**
+	 * Joins a field/town hunter to its population's bot clan, if one is configured. {@code botClan} names a bot clan
+	 * key (or "random" for any), and {@code botClanChance} is the per-phantom probability it wears that clan, so a
+	 * population can be entirely clanned, partly clanned, or clan-free. No-op when the population sets no bot clan.
+	 */
+	private void attachBotClan(Player phantom, Population population)
+	{
+		if ((population == null) || population.botClan.isEmpty() || (Rnd.get(100) >= population.botClanChance))
+		{
+			return;
+		}
+		final Clan clan = population.botClan.equalsIgnoreCase("random") //
+			? BotClanManager.getInstance().getRandomClan() //
+			: BotClanManager.getInstance().getClanByKey(population.botClan);
+		if (clan == null)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": Population '" + population.name + "' references unknown bot clan '" + population.botClan + "'.");
+			return;
+		}
+		BotClanManager.getInstance().attach(phantom, clan);
+	}
+
+	/**
 	 * Finishes materializing an already created-or-loaded phantom {@link Player}: gears it, drops it into the
 	 * world at {@code spawnLocation}, registers it, and hands it to the buddy manager or the auto-hunt. Shared
 	 * by the population/admin path ({@link #createAndSpawn}) and the friend login-spawn path
@@ -1997,6 +2031,12 @@ public class PhantomManager implements IXmlReader
 			outfit(phantom, level, mage);
 		}
 		phantom.refreshOverloaded();
+		// Bot clan (field/town hunters only): join before entering the world so the very first CharInfo already carries
+		// the clan crest and name. Buddies and friend-summons keep their own identity and are never auto-clanned.
+		if (!role.isBuddy() && (friendOwnerId == 0))
+		{
+			attachBotClan(phantom, population);
+		}
 		enterWorld(phantom, spawnLocation);
 
 		final PhantomData data = new PhantomData(phantom, spawnLocation, population, mage, role);
@@ -2231,6 +2271,43 @@ public class PhantomManager implements IXmlReader
 	}
 
 	/**
+	 * Stocks a combat phantom with the reagents its <b>offensive</b> skills consume - most importantly the
+	 * Necromancer line's Death Spike, which eats a Cursed Bone (item 2508) per cast. Without the reagent the
+	 * engine's {@code canAffordReagent} guard rejects that cast every tick, so a field Necromancer silently
+	 * drops its main nuke and only ever casts the reagent-free fallback (Vampiric Claw). Scanned data-driven
+	 * from the skills the phantom actually knows, so it adapts to whatever class/level kit it ended up with.
+	 * This is the offensive counterpart to {@link #giveBuffReagents}: it stocks only attack/debuff skills, so
+	 * the two never double-count. Must run AFTER the skill tree is learned.
+	 * @param phantom the combat phantom (field hunter or recruited party fighter/caster)
+	 */
+	private void giveCombatReagents(Player phantom)
+	{
+		final Set<Integer> reagents = new HashSet<>();
+		for (Skill skill : phantom.getAllSkills())
+		{
+			if ((skill == null) || skill.isPassive() || (skill.getItemConsumeId() <= 0) || (skill.getItemConsumeCount() <= 0))
+			{
+				continue;
+			}
+			// Offensive only (a damaging nuke has a negative effectPoint; a debuff is flagged as such). The
+			// beneficial buffs and heals are stocked by giveBuffReagents, so this inverse split covers every
+			// reagent-consuming skill exactly once.
+			if ((skill.getEffectPoint() < 0) || skill.isDebuff())
+			{
+				reagents.add(skill.getItemConsumeId());
+			}
+		}
+		for (int reagentId : reagents)
+		{
+			phantom.getInventory().addItem(ItemProcessType.REWARD, reagentId, BUFF_REAGENT_COUNT, phantom, null);
+		}
+		if (!reagents.isEmpty())
+		{
+			LOGGER.info(getClass().getSimpleName() + ": Stocked " + phantom.getName() + " with combat reagents " + reagents + " (x" + BUFF_REAGENT_COUNT + " each).");
+		}
+	}
+
+	/**
 	 * Advances a phantom from its base class to the occupation its level warrants by walking the class
 	 * tree, choosing a random in-archetype branch at each transfer: 1st at 20+, 2nd at 40+, 3rd at 76+.
 	 * @param phantom the phantom (created as a base fighter or mage)
@@ -2329,6 +2406,10 @@ public class PhantomManager implements IXmlReader
 		phantom.getInventory().addItem(ItemProcessType.REWARD, HP_POTION_ID, HP_POTION_COUNT, phantom, null);
 		phantom.getAutoUseSettings().setAutoPotionItem(HP_POTION_ID);
 		phantom.getAutoPlaySettings().setAutoPotionPercent(HP_POTION_PERCENT);
+
+		// Offensive reagents: the Necromancer line's Death Spike eats a Cursed Bone per cast; stock it (and any
+		// other reagent-consuming nuke this kit knows) so the main nuke actually fires instead of being skipped.
+		giveCombatReagents(phantom);
 
 		// Armor: a full matching set (Karmian / Mithril / Full Plate, ...) for the loadout's family, so a field
 		// hunter wears a coherent outfit instead of a random per-slot mix. Fighters roll light or heavy for variety.
@@ -2468,6 +2549,13 @@ public class PhantomManager implements IXmlReader
 		phantom.getInventory().addItem(ItemProcessType.REWARD, HP_POTION_ID, HP_POTION_COUNT, phantom, null);
 		phantom.getAutoUseSettings().setAutoPotionItem(HP_POTION_ID);
 		phantom.getAutoPlaySettings().setAutoPotionPercent(HP_POTION_PERCENT);
+
+		// Fallback rez: a few Scrolls of Resurrection the party brain uses only when the group has no living skill-rezzer.
+		phantom.getInventory().addItem(ItemProcessType.REWARD, REZ_SCROLL_ID, REZ_SCROLL_COUNT, phantom, null);
+
+		// Offensive reagents: a recruited Necromancer's Death Spike eats a Cursed Bone per cast - stock it so a
+		// party caster uses its main nuke rather than dropping to the reagent-free fallback.
+		giveCombatReagents(phantom);
 
 		// Full matching armor set in the class's practical armor family (Heavy for tanks/warriors/singer/dancer,
 		// Light for archer/dagger/monk, robe for casters) - a coherent set (Karmian / Full Plate, ...) rather than a
@@ -3096,6 +3184,9 @@ public class PhantomManager implements IXmlReader
 		// isRegular (not a raw account check) so a phantom promoted THIS session - whose final in-memory
 		// account still reads 'phantom' - is recognized and its row kept too.
 		final boolean persistent = isRegular(data.player);
+		// Drop any bot-clan membership BEFORE storeMe() so a persistent regular's saved character row keeps clanid 0
+		// (bot-clan membership is runtime-only and rebuilt each spawn, never written to the characters table).
+		BotClanManager.getInstance().detach(data.player);
 		try
 		{
 			AutoPlayTaskManager.getInstance().stopAutoPlay(data.player);
@@ -3328,6 +3419,13 @@ public class PhantomManager implements IXmlReader
 				outfitCombat(phantom, level, role);
 			}
 			phantom.refreshOverloaded();
+			// Recruited (LFM) phantoms occasionally belong to a bot clan (BotClans.xml recruitClanChance), so a pickup
+			// group sometimes shows clan crests. Rolled before enterWorld so the first CharInfo already carries it.
+			final int recruitClanChance = BotClanManager.getInstance().getRecruitClanChance();
+			if ((recruitClanChance > 0) && (Rnd.get(100) < recruitClanChance))
+			{
+				BotClanManager.getInstance().attach(phantom, BotClanManager.getInstance().getRandomClan());
+			}
 			enterWorld(phantom, spawnLocation);
 
 			// role=NONE + recruited: skips every hunter path; population=null so the proximity deactivate never

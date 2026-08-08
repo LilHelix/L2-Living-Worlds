@@ -1659,11 +1659,18 @@ public class FakePlayerChatManager implements IXmlReader
 			final Matcher shop = SHOP_TAG.matcher(reply);
 			if (shop.find())
 			{
-				final boolean botSells = "SELL".equalsIgnoreCase(shop.group(1));
-				final ItemTemplate item = FakePlayerStoreFactory.findItemByName(shop.group(2));
+				// A weak brain model routinely flips SELL/BUY, mangles the item name, and drops the "k" on the
+				// price inside this tag. Java already parsed the real terms from the original WTS/WTB ad and
+				// stashed them in the deal context, so treat that as authoritative: the SHOP tag is only the
+				// "deal agreed, open it now" signal, not the source of truth for direction/item/price. When there
+				// is no stored deal (unusual), fall back to reading the terms straight from the tag.
+				final BrainDealContext deal = ACTIVE_DEALS.get(dealKey(player.getName(), bot.getName()));
+				final boolean botSells = (deal != null) ? "SELL".equalsIgnoreCase(deal.side) : "SELL".equalsIgnoreCase(shop.group(1));
+				final ItemTemplate item = FakePlayerStoreFactory.findItemByName((deal != null) ? deal.item : shop.group(2));
 				if (item != null)
 				{
-					final int price = FakePlayerChatParsing.applyShopPriceMultiplier(Integer.parseInt(shop.group(3)), shop.group(4));
+					final int taggedPrice = FakePlayerChatParsing.applyShopPriceMultiplier(Integer.parseInt(shop.group(3)), shop.group(4));
+					final int price = (deal != null) ? FakePlayerChatParsing.resolveDealPrice(taggedPrice, deal.unitPrice) : taggedPrice;
 
 					final int storeType = botSells ? PrivateStoreType.SELL.getId() : PrivateStoreType.BUY.getId();
 					final FakePlayerBehaviorManager behavior = FakePlayerBehaviorManager.getInstance();

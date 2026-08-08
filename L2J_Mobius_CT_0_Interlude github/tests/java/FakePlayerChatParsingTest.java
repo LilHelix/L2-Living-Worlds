@@ -48,6 +48,7 @@ public class FakePlayerChatParsingTest
 	{
 		testTradeQuantity();
 		testShopPriceMultiplier();
+		testResolveDealPrice();
 		testLfpLevel();
 		testLooksLikeLfp();
 		testLooksLikeTradeAd();
@@ -89,6 +90,22 @@ public class FakePlayerChatParsingTest
 		eq(5000, FakePlayerChatParsing.applyShopPriceMultiplier(5, "k"), "k -> *1000");
 		eq(5000000, FakePlayerChatParsing.applyShopPriceMultiplier(5, "kk"), "kk -> *1,000,000");
 		eq(5000, FakePlayerChatParsing.applyShopPriceMultiplier(5, "K"), "suffix is case-insensitive");
+	}
+
+	private static void testResolveDealPrice()
+	{
+		// The offer is authoritative; a genuine haggle within 4x either way is honored.
+		eq(14000, FakePlayerChatParsing.resolveDealPrice(14000, 14000), "exact match kept");
+		eq(12000, FakePlayerChatParsing.resolveDealPrice(12000, 14000), "small discount is a real haggle");
+		eq(20000, FakePlayerChatParsing.resolveDealPrice(20000, 14000), "small markup is a real haggle");
+		// The core bug: the model dropped the "k", so 14k became a literal 14 -> reject, use the offer.
+		eq(14000, FakePlayerChatParsing.resolveDealPrice(14, 14000), "dropped-k 14 -> falls back to 14000");
+		// An added "k" (14 offered, tag says 14000) is also outside the band -> use the offer.
+		eq(14, FakePlayerChatParsing.resolveDealPrice(14000, 14), "added-k -> falls back to offer");
+		// No usable tag price -> use the offer; no server anchor -> trust the tag.
+		eq(14000, FakePlayerChatParsing.resolveDealPrice(0, 14000), "no tag price -> offer");
+		eq(500, FakePlayerChatParsing.resolveDealPrice(500, 0), "no offer -> trust tag");
+		eq(0, FakePlayerChatParsing.resolveDealPrice(0, 0), "nothing known -> 0");
 	}
 
 	private static void testLfpLevel()

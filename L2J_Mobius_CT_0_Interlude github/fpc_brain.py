@@ -487,6 +487,9 @@ def whisper_persona(fpc, voice):
             "[[SHOP:SELL:<item>:<price>]] if YOU sell that item to them, or "
             "[[SHOP:BUY:<item>:<price>]] if YOU buy it from them.\n"
             "- <item> must be the plain item name, e.g. Soulshot D-grade. <price> must be a plain number.\n"
+            "- When you close a deal (any line that carries a MEET or SHOP tag), keep the spoken part short and "
+            "on-topic about the trade or meeting. Do NOT bring up unrelated stuff (your day, catacombs, drops, "
+            "epics, side stories) on the closing line.\n"
             "- Shop tags and meet tags are commands only. Never mention, explain, quote, or read out tags.")
 
 def trade_persona(fpc, voice):

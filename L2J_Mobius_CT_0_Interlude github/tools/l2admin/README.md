@@ -8,12 +8,17 @@ opened in a browser.
 ## Quick start
 
 1. Open `index.html` in **Chrome / Edge / Brave** (Chromium browsers can write files in place).
-2. Click **Open config folder** and pick your server's `game/config` directory.
+2. Click **Open game folder** and pick your server's `game` directory (the one that holds both
+   `config` and `data`). The config panels read `game/config`, and the **Phantom Playstyles** and
+   **Bot Clans** tabs read `game/data` from the same pick, so there is no separate data folder to open.
 3. Edit with the friendly panels (toggles, number boxes) or the **Raw editor** (every key in
    any file). Changed files light up.
 4. Click **Save changes** - the values are written straight back into the `.ini` files.
 5. In-game, run `//reload config` (or restart the server) to apply. Some settings only take
    effect on a restart.
+
+> You can still point it straight at `game/config` if you prefer; the data tabs then fall back to
+> their own **Open data folder** button, exactly as before.
 
 The folder you pick is **remembered** between visits. Next time you open the page it either
 loads straight away, or (if the browser has dropped write permission) shows a single **Reopen
@@ -31,8 +36,12 @@ loads straight away, or (if the browser has dropped write permission) shows a si
   - **Fake Players** (`Custom/FakePlayers.ini`) - including the AI party toggles
   - **Auto Play** (`Custom/AutoPlay.ini`)
   - **Premium** (`Custom/PremiumSystem.ini`)
+  - **Raid Bosses** (`NPC.ini`) - scale every raid boss's attack, defense and regen at once (percent,
+    100 = retail; restart to apply)
 - **Raw editor** - every key in any `.ini` in the folder, for power users.
 - **Phantom Playstyles** - a visual editor for `game/data/PhantomPlaystyles.xml` (see below).
+- **Population** - the visual map editor for FakePlayer and Phantom populations, routes, spawn zones,
+  and map overlays (see below).
 
 Fields tagged **new** (phantom party XP/SP share, phantom loot/adena share, recruit enchant
 chance & range) are backed by new server code. That code only has to be compiled into
@@ -47,11 +56,12 @@ what conditions, and - most importantly - **in what order**. Order *is* priority
 casts the first listed entry whose conditions pass, so dragging a row up genuinely changes
 behaviour. That ordering is invisible in a text editor, which is the main reason this tab exists.
 
-It reads a **different folder** from the config panels - your server's `game/data` directory -
-picked separately and remembered on its own. Click **Open data folder** in the tab (you can
-point it at `game/data`, at `game`, or at the pack root and it will find the rest). The first
-open indexes the skill and skill-tree data next to the playstyle file, which takes a moment;
-after that it's cached and instant until the datapack changes.
+It reads your server's `game/data` directory. If you opened the whole `game` folder on the start
+screen, this loads automatically from the same pick - no separate step. If you opened `game/config`
+directly instead, the tab shows its own **Open data folder** button (you can point it at `game/data`,
+at `game`, or at the pack root and it will find the rest). The first open indexes the skill and
+skill-tree data next to the playstyle file, which takes a moment; after that it's cached and instant
+until the datapack changes.
 
 What it gives you:
 
@@ -116,6 +126,64 @@ ROTATION/CONTROL/AOE chip says more clearly than 32×32 client art does.
   but nothing will read it.
 - **Summoner lineages** work, but only the caster's own skills fire; servitor control isn't
   implemented yet.
+
+## Bot Clans
+
+This tab edits **which synthetic clans phantoms wear, how they group into alliances, and their crests**. It
+reads the same **game/data** folder as the Phantom Playstyles tab (open it once and both tabs use it).
+
+- **Membership chances** - two dials at the top of the tab set how often bots wear one of your clans: one for
+  **town fake players**, one for **recruited (LFM) phantoms**, each `0..100` (0 = never, 100 = always). A bot in a
+  clan that belongs to an alliance shows that alliance crest too, so this one setting covers both. These write the
+  `fakePlayerClanChance` / `recruitClanChance` attributes on the file's `<settings>` line (the panel creates that
+  line if your file has none). Like the clans themselves, they are read at server boot, so **restart to apply**.
+- **Clans** - add, rename, delete; set each clan's level and pick its crest from a **visual dropdown** that shows
+  every crest set with a thumbnail. The key is the internal id that alliances and `PhantomPopulations.xml`
+  reference; the name is what players see (<= 16 chars, no spaces).
+- **Alliances** - create and delete alliances, pick the leader clan, choose the ally crest from the same visual
+  picker, and choose members from a **multi-select dropdown**. That list only offers clans that are still free,
+  because a clan can be in at most one alliance - the safeguard is enforced in the UI, so you can't double-book
+  one. Deleting a clan removes it from any alliance automatically.
+- **Crests** - make a crest from **any image** (PNG, BMP, JPG, ...) right in the browser. Each crest set writes
+  the three `.dds` (DXT1) textures the client needs - pledge (16x16), ally (8x16), large (32x16) - padded to the
+  power-of-two dimensions the client requires, plus a `.png` source you can re-edit later. Delete a set the same
+  way. This replaces running `tools/crest_png_to_dds.py`; no Python needed.
+- **Export / Import** - **Export setup** downloads your clans and alliances as a JSON file to share or back up.
+  **Import setup** merges a file back in and **never overwrites what you already have**: a clan or alliance whose
+  key or name already exists is skipped, and an imported member that is already in another alliance is dropped, so
+  your own setup is always preserved. (Crest image files live in `data/crests/` and are shared separately.)
+
+All the dropdowns are drawn by the panel itself, so they follow the dark/light theme - no native white popups.
+
+`BotClans.xml` is held to the same comment-preserving standard as the playstyle file: editing one field rewrites
+exactly one line, the big header comment and your layout are untouched, and if the panel can't reproduce your
+file byte for byte on load it disables editing rather than reformat it.
+
+> **Applies on restart.** Unlike playstyles, bot clans and alliances are rebuilt from this file only at server
+> boot - there is no live reload - so save here and **restart the server** to see the changes. Crest files are
+> written straight to `data/crests/` and are likewise picked up on the next boot.
+
+## Population
+
+This tab is the visual **map editor** for your server's populations: NPC fake players, real-Player
+phantoms, recruitable friends, and raid-boss strength. Open a folder and it renders your `geodata` as a
+height-relief world map, then you drop and drag population circles, draw patrol routes and spawn zones,
+and overlay city / world-map images.
+
+It reads the same `game/data` you already opened for the other tabs, so if you started from the `game`
+folder it loads with no extra step (its own folder picker is hidden in that case). Full operating
+details (behaviors, routes, zones, support buddies, colors) live in `tools/fpc-editor/README.md`, which
+documents the same editor.
+
+**Export / Import** - above the population list, **Export** downloads the current mode's populations as a
+JSON file to share or back up. Tick the checkbox on the rows you want first to export just those, or leave
+them all unticked to export the whole list (**Select all** / **Select none** do it in one click). **Import**
+merges a file back in and **never overwrites what you already have**: a population whose name you already
+have is skipped, and the toast tells you how many were added and how many were skipped. Export and Import are
+per mode, so NPC and Phantom lists stay in their own files. After an import, click **Save** to write it out.
+
+Raid-boss strength is **not** here: because it scales `game/config/NPC.ini`, it lives in the **Raid Bosses**
+config panel above, next to the other `.ini` editors.
 
 ## Safety
 
