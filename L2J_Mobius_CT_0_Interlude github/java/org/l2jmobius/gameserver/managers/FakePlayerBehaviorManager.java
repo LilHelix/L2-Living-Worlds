@@ -1237,6 +1237,29 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		return true;
 	}
 
+	/**
+	 * Replace the stock of a deal that is already pending (e.g. after the player finally states how many they want),
+	 * so the shop opened at the meet reflects the renegotiated amount/price. Only updates an existing pending deal;
+	 * it never arms a new one, and it leaves the reservation timer untouched.
+	 * @return {@code true} if a pending deal existed and was updated
+	 */
+	public boolean updateDealStock(Npc bot, int storeType, List<FakePlayerStoreItem> stock, String title)
+	{
+		if ((bot == null) || (stock == null) || stock.isEmpty())
+		{
+			return false;
+		}
+		final BotState state = _bots.get(bot.getObjectId());
+		if ((state == null) || (state.pendingStoreType == 0))
+		{
+			return false; // no deal waiting to update
+		}
+		state.pendingStoreType = storeType;
+		state.pendingStock = stock;
+		state.pendingTitle = title;
+		return true;
+	}
+
 	public int getPendingDealCount(Npc bot, int itemId)
 	{
 		if (bot == null)

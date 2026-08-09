@@ -234,6 +234,62 @@ public final class FakePlayerStorePricing
 		return String.valueOf(count);
 	}
 
+	/**
+	 * Round an auto-generated price to a natural, round value a real player would actually say, instead of the
+	 * ugly exact number the randomised markup produces (45,320 -&gt; 45,000). Small per-unit prices (shots, arrows)
+	 * stay exact so "3a each" is preserved; 100-999 rounds to the nearest 10; anything from 1000 up rounds to two
+	 * significant figures. This is only for auto-pricing - a price the player explicitly stated is honored as-is
+	 * (only the anti-injection clamp applies), so their number is never second-guessed.
+	 * @param price the raw price to round
+	 * @return the rounded price, at least 1 for any positive input
+	 */
+	public static int naturalizePrice(int price)
+	{
+		if (price <= 0)
+		{
+			return Math.max(1, price);
+		}
+		if (price < 100)
+		{
+			return price; // small per-unit prices stay exact ("3a each")
+		}
+		if (price < 1000)
+		{
+			return (int) (Math.round(price / 10.0) * 10); // nearest 10
+		}
+		// Two significant figures for anything >= 1000.
+		final int digits = (int) Math.floor(Math.log10(price)) + 1;
+		final long step = (long) Math.pow(10, digits - 2);
+		final long rounded = Math.round(price / (double) step) * step;
+		return (int) Math.max(1L, Math.min(rounded, Integer.MAX_VALUE));
+	}
+
+	/**
+	 * Format an adena amount the way an Interlude player types it in chat: k for thousands, kk for millions
+	 * (45,000 -&gt; "45k", 470,000 -&gt; "470k", 1,200 -&gt; "1.2k", 45,000,000 -&gt; "45kk", 300 -&gt; "300"). Used for
+	 * spoken prices and stack sizes so bots quote "45k adena" instead of reading out the full digit string.
+	 * @param value the amount in adena (or a stack count)
+	 * @return the shorthand text
+	 */
+	public static String priceText(long value)
+	{
+		if (value >= 1_000_000L)
+		{
+			return trimShorthand(value / 1_000_000.0) + "kk";
+		}
+		if (value >= 1000L)
+		{
+			return trimShorthand(value / 1000.0) + "k";
+		}
+		return String.valueOf(value);
+	}
+
+	/** A shorthand magnitude: a whole number drops the decimal ("45"), otherwise one decimal place ("1.2"). */
+	private static String trimShorthand(double value)
+	{
+		return (value == Math.floor(value)) ? String.valueOf((long) value) : String.format(Locale.US, "%.1f", value);
+	}
+
 	/** Normalises a name/phrase to lowercase word tokens: strips punctuation, drops filler, folds plurals. */
 	public static List<String> matchTokens(String text)
 	{

@@ -495,7 +495,7 @@ public class FakePlayerStoreFactory
 		{
 			final int fallbackCount = item.isStackable() ? bulkAmount(item.getReferencePrice()) : 1;
 			final int count = normalizedDealCount(item, requestedCount, fallbackCount);
-			final int price = unitPrice > 0 ? clampDealPrice(unitPrice, effRef(item.getReferencePrice()), true) : priced(effRef(item.getReferencePrice()), 1.0, 1.6);
+			final int price = unitPrice > 0 ? clampDealPrice(unitPrice, effRef(item.getReferencePrice()), true) : FakePlayerStorePricing.naturalizePrice(priced(effRef(item.getReferencePrice()), 1.0, 1.6));
 			stock.add(line(item, 0, count, price));
 		}
 		return stock;
@@ -536,7 +536,7 @@ public class FakePlayerStoreFactory
 		{
 			final int fallbackCount = item.isStackable() ? bulkAmount(item.getReferencePrice()) : Rnd.get(1, 3);
 			final int count = normalizedDealCount(item, requestedCount, fallbackCount);
-			final int price = unitPrice > 0 ? clampDealPrice(unitPrice, effRef(item.getReferencePrice()), false) : priced(effRef(item.getReferencePrice()), 0.5, 0.85);
+			final int price = unitPrice > 0 ? clampDealPrice(unitPrice, effRef(item.getReferencePrice()), false) : FakePlayerStorePricing.naturalizePrice(priced(effRef(item.getReferencePrice()), 0.5, 0.85));
 			stock.add(line(item, 0, count, price));
 		}
 		return stock;

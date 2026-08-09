@@ -41,6 +41,7 @@ import java.util.regex.Pattern;
 
 import org.l2jmobius.commons.threads.ThreadPool;
 import org.l2jmobius.commons.util.Rnd;
+import org.l2jmobius.gameserver.ai.Action;
 import org.l2jmobius.gameserver.ai.Intention;
 import org.l2jmobius.gameserver.config.NpcConfig;
 import org.l2jmobius.gameserver.geoengine.GeoEngine;
@@ -97,6 +98,10 @@ public class PhantomPartyManager
 	private long _lastRaidLog;
 
 	private static final long TICK_INTERVAL = 1000;
+	// A clientless phantom's cast flag can stick set after a skill has actually finished. Past this window (longer than
+	// any melee playstyle skill's cast/hit time) the flag is treated as stale so the member's auto-attack resumes
+	// instead of standing idle "mid-cast" - the freeze a low-MP dagger showed when its only skill was gated out.
+	private static final long CAST_FLAG_STALE_MS = 1500;
 	private static final int MAX_PER_REQUEST = 8; // a full party (minus the leader) from one shout, slots permitting
 	private static final int APPROACH_MIN = 700; // how far out a recruit spawns before walking in (close, so a raid party assembles fast)
 	private static final int APPROACH_MAX = 1300;
@@ -471,6 +476,7 @@ public class PhantomPartyManager
 		long rearMoveAt; // DAGGER: when it last started sliding behind the target
 		int rearTargetId; // ...which target that was, so the give-up counter resets on a new fight
 		int rearTries; // blocked rear attempts on the current target; past a few, fight from the front
+		long castStuckSince; // engageFocus: when this member first looked idle-but-still-"casting" at the attack re-issue, so a lingering clientless cast flag can be cleared once it outlives any real cast (0 = not watching)
 		final PhantomPlaystyleEngine.PlayState play = new PhantomPlaystyleEngine.PlayState(); // per-class combat playstyle runtime (entries resolve lazily)
 		long lastPeelControlAt; // ARCHER/NUKER: when it last stunned/slowed something that was on it
 		long peelMoveAt; // ...and when it last stepped away from it, so kite moves aren't re-issued every tick
@@ -2408,15 +2414,59 @@ public class PhantomPartyManager
 		// resumes next tick.
 		if (tryPlaystyle(state, focus))
 		{
+			state.castStuckSince = 0L; // a fresh cast launched this tick - nothing stale for the watchdog below to clear
 			return true;
 		}
-		// Keep a live auto-attack on the focus: re-assert ATTACK whenever the member isn't mid-swing or mid-cast, so a
-		// clientless melee/archer keeps plinking with soulshots between skills instead of dropping to IDLE.
-		if ((npc.getTarget() != focus) || (!npc.isAttackingNow() && !npc.isCastingNow()))
+		// Keep a live auto-attack on the focus so a clientless melee/archer keeps plinking with soulshots between skills
+		// instead of dropping to IDLE. THE CORE PROBLEM: after a playstyle skill the cast interrupts the melee loop, and
+		// the AI is left INTENDING attack on this same focus but with no swing scheduled. Re-issuing setIntention(ATTACK,
+		// focus) then does nothing, because CreatureAI.onIntentionAttack treats "already ATTACK on this target" as a
+		// no-op (it just sends ActionFailed) instead of relaunching - so the member stands idle taking hits until some
+		// other event disturbs its intention (why a "follow" order temporarily un-sticks it, and why this is not tied to
+		// MP: it happens after every cast). isAttackingNow() stays true for the whole attack interval (attackEndTime =
+		// now + timeBetweenAttacks), so it is false ONLY when the loop is genuinely stopped - exactly this wedge. In that
+		// wedged case we poke THINK to relaunch the swing (doAttack self-guards via isAttackDisabled, so it can never
+		// swing early); any other case re-engages/retargets normally through setIntention.
+		final long now = System.currentTimeMillis();
+		boolean casting = npc.isCastingNow();
+		if (casting)
+		{
+			// Safety net for the separate clientless quirk where a cast flag lingers set after the skill finished (the
+			// same one restForMp clears with abortCast before sitting). If it outlives any real melee cast, treat it as
+			// stuck, clear it, and attack this tick so a stuck flag can never suppress the swing either.
+			if (state.castStuckSince == 0L)
+			{
+				state.castStuckSince = now;
+			}
+			else if ((now - state.castStuckSince) >= CAST_FLAG_STALE_MS)
+			{
+				npc.abortCast();
+				state.castStuckSince = 0L;
+				casting = false;
+			}
+		}
+		else
+		{
+			state.castStuckSince = 0L;
+		}
+		if (!casting && (!npc.isAttackingNow() || (npc.getTarget() != focus)))
 		{
 			npc.setTarget(focus);
 			npc.setRunning();
-			npc.getAI().setIntention(Intention.ATTACK, focus);
+			if ((npc.getAI().getIntention() == Intention.ATTACK) && (npc.getAI().getAttackTarget() == focus))
+			{
+				// The wedge: setIntention(ATTACK, focus) would no-op here. Poke THINK so onActionThink -> thinkAttack ->
+				// doAttack relaunches the interrupted swing.
+				npc.getAI().notifyAction(Action.THINK);
+				if (DEBUG)
+				{
+					dbg("ATTACK-RESUME '" + npc.getName() + "' (" + state.role + ") re-launched auto-attack on '" + focus.getName() + "' (" + npc.getCurrentHpPercent() + "% HP / " + npc.getCurrentMpPercent() + "% MP)");
+				}
+			}
+			else
+			{
+				npc.getAI().setIntention(Intention.ATTACK, focus); // fresh engage or retarget - onIntentionAttack relaunches on its own
+			}
 		}
 		return true;
 	}
