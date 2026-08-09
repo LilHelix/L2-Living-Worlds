@@ -38,8 +38,12 @@ import org.l2jmobius.gameserver.model.item.ItemTemplate;
  * <li>armor pieces with no model for some race (e.g. "Tunic of Mana", which is invisible on an Orc mystic) were
  * deliberately left out of the GM gear lists, so drawing only from here <b>needs no race-specific skip</b>.</li>
  * </ul>
- * The only residue is a handful of NPC weapons named "Monster Only(...)" that sit in the weapon lists; those are
- * dropped by name when the allow-list is built.
+ * NPC-only weapons are dropped by the {@code isForNpc()} data flag when the allow-list is built (the "Monster
+ * Weapons" section: Tomb Guard, For NPC (Dusk), "Monster Only ..."), which is robust where the old "Monster Only"
+ * name match missed variants. Items with an UNMEETABLE equip gate (Clan Oath's academy pledgeClass, hero/noble
+ * gear) are NOT filtered here - most normal armor carries a benign all-races {@code <conditions>} block, so a
+ * blanket condition filter would strip real gear - they are caught per-phantom at equip time in
+ * {@code PhantomManager.equipArmorSet} via {@link ItemTemplate#checkCondition}.
  * <p>
  * The allow-list is resolved lazily from {@link BuyListData} (already loaded at start-up) the first time gear is
  * built, so it stays in sync automatically if a buy-list is edited. If a listed buy-list id is missing it is
@@ -72,9 +76,26 @@ public class FakePlayerGearFilter
 	};
 
 	private static volatile Set<Integer> _allowed = null;
+	private static volatile int _version = 0;
 
 	private FakePlayerGearFilter()
 	{
+	}
+
+	/**
+	 * Invalidates the allow-list after {@link BuyListData} finishes loading. Dependent gear caches compare
+	 * {@link #getVersion()} before use and rebuild lazily when this version changes.
+	 */
+	public static synchronized void onBuyListsReloaded()
+	{
+		_allowed = null;
+		_version++;
+	}
+
+	/** @return the current allow-list generation used by dependent caches. */
+	public static int getVersion()
+	{
+		return _version;
 	}
 
 	private static Set<Integer> allowed()
@@ -102,7 +123,14 @@ public class FakePlayerGearFilter
 				for (Product product : buyList.getProducts())
 				{
 					final ItemTemplate item = product.getItem();
-					if ((item != null) && !item.getName().contains("Monster Only")) // drop NPC weapons that leaked into the gear lists
+					// Drop NPC-only "Monster Weapons" (Tomb Guard, For NPC (Dusk), "Monster Only ...") by the for_npc
+					// data flag - robust where the old "Monster Only" NAME match missed the ones not named that way.
+					// Do NOT filter by isConditionAttached() here: most normal armor carries a benign <conditions>
+					// block (an all-races <player races=.../> list), so excluding any conditioned item stripped whole
+					// grades of real armor and shields. Items with an UNMEETABLE equip gate (Clan Oath's academy
+					// pledgeClass, hero/noble/olympiad) are caught per-phantom at equip time in
+					// PhantomManager.equipArmorSet via ItemTemplate.checkCondition instead.
+					if ((item != null) && !item.isForNpc())
 					{
 						built.add(item.getId());
 					}

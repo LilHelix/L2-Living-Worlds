@@ -218,6 +218,19 @@ if (Test-Path $adminSrc) {
     Ok "config control panel bundled (open tools\l2admin\index.html in a browser)"
 }
 
+# ---- 6e. bundle the playstyle validator into pack\tools --------------------
+# Ships with the pack so anyone editing game\data\PhantomPlaystyles.xml can check their work
+# (skill ids, names, conditions, per-level coverage) before restarting. Needs Python 3; in game
+# "//phantom playstyle check" reports parse problems without it.
+$playstyleValidator = Join-Path $ProjectRoot 'research\validate_playstyles.py'
+if (Test-Path $playstyleValidator) {
+    Info "bundling the playstyle validator into pack\tools ..."
+    $toolsDir = Join-Path $Pack 'tools'
+    New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+    Copy-Item $playstyleValidator (Join-Path $toolsDir 'validate_playstyles.py') -Force
+    Ok "playstyle validator bundled (python tools\validate_playstyles.py)"
+}
+
 # ---- 7. zip it -------------------------------------------------------------
 $outZip = Join-Path $OutDir 'L2J-Offline-OneClick.zip'
 if (Test-Path $outZip) { Remove-Item $outZip -Force }
@@ -254,8 +267,15 @@ if (Test-Path $manifestPath) {
         $src = Join-Path $Pack $rel
         if (-not (Test-Path $src)) { $missing += $rel; continue }
         $dst = Join-Path $patchRoot $rel
-        New-Item -ItemType Directory -Path (Split-Path -Parent $dst) -Force | Out-Null
-        Copy-Item -Path $src -Destination $dst -Force
+        if (Test-Path $src -PathType Container) {
+            # A directory entry (game\data\crests, game\data\skill icons, images): copy the WHOLE tree, every
+            # subfolder and file. Copy-Item without -Recurse would create an empty folder here and silently drop
+            # the crest sets and icon subfolders, so use the robocopy-based Copy-Tree that mirrors the full tree.
+            Copy-Tree $src $dst
+        } else {
+            New-Item -ItemType Directory -Path (Split-Path -Parent $dst) -Force | Out-Null
+            Copy-Item -Path $src -Destination $dst -Force
+        }
     }
     # Fail loudly rather than silently shipping an incomplete patch.
     if ($missing.Count -gt 0) { Die ("patch-manifest.txt lists files not present in the built pack:`n  " + ($missing -join "`n  ")) }

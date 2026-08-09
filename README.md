@@ -39,15 +39,18 @@ suggestions, join our [L2 Living Worlds Discord](https://discord.gg/6KTyDG55PA).
 
 The easiest way to play. You do **not** need Java, a database, or any setup.
 
-1. Download the latest **`L2J-Offline-OneClick.zip`** from the
+1. Download the latest **`version release`** from the
    [**Releases**](../../releases) page.
 2. Unzip it anywhere.
-3. Double-click **`Start-Server.bat`**.
+3. Double-click the **`Control-Panel.bat`** for the alpha GUI launcher version or **`Start-Server.bat`** to skip the launcer.
 
 On first run it initializes a bundled, portable MariaDB, imports the schema, then starts
 the login and game servers - a bundled JDK and database are inside the zip, so there's
 nothing to install. Later runs start straight up. `Stop-Server.bat` shuts everything down
 cleanly.
+
+**`WARNING`**
+If the server did not close down gracefully, it might have leftover items that prevent it from starting again. If that happens, you need to delete the **`.processes.json`** in the launcher folder. It is a hidden file, so make sure you can see hidden files through Windows settings.
 
 Then connect your **Interlude game client** to the server (see
 [Connecting the client](#connecting-the-client) below) and log in:
@@ -68,9 +71,8 @@ You need a **Lineage 2 Interlude** client (the server does not ship one).
 - **Easiest - pre-configured L2.exe:** find and download an interlude client and then
   download the ready-to-play l2.exe from **[here](https://www.mediafire.com/file/4rom0v9yuc7za4y/L2.exe/file)**. It's already
   set to connect to `127.0.0.1`, so just run it and log in.
-  WARNING - For some shared clients, users sometimes rename "L2.bin" to "L2.exe" (which is the same file).
-  In such cases, rename the existing "L2.exe" back to "L2.bin" and replace it with the "L2.exe" from the link provided above.
-- **Manual - your own Interlude client:** point it at the local server by editing the
+  WARNING - Rename the existing "L2.exe" of your client to "L2.bin" and replace it with the new "L2.exe" from the link provided above.
+- **Manual** - if you don't want the provided l2.exe point your client at the local server by editing the
   client's `system/l2.ini` so the login server host is `127.0.0.1` (or add a `hosts`
   entry mapping the login server's hostname to `127.0.0.1`). Then launch and log in.
 
@@ -116,7 +118,7 @@ Configure it with a `.env` file in that folder:
 ```ini
 # Local model (recommended, no key needed):
 PROVIDER=ollama
-OLLAMA_MODEL=llama3.1
+OLLAMA_MODEL=gamma3:12b
 
 # — or — a hosted provider:
 # PROVIDER=deepseek

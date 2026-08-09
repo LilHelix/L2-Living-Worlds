@@ -4,19 +4,14 @@ name: Build one-click pack
 # need JDK or Ant on your own machine. Click "Run workflow" in the Actions tab,
 # wait for it to finish, then download the L2J-Offline-OneClick artifact.
 on:
+  # Manual only: run it from the Actions tab with "Run workflow" when you want a
+  # fresh pack. It no longer builds automatically on push/merge.
   workflow_dispatch:
     inputs:
       mariadb_version:
         description: "Portable MariaDB version to bundle"
         required: false
         default: "11.4.5"
-  # Also build on every push that touches the launcher/pack files, so a changed
-  # pack can be produced and downloaded before merging to main (where the manual
-  # button lives).
-  push:
-    paths:
-      - "L2J_Mobius_CT_0_Interlude github/dist/launcher/**"
-      - ".github/workflows/build-oneclick-pack.yml"
 
 jobs:
   build-pack:

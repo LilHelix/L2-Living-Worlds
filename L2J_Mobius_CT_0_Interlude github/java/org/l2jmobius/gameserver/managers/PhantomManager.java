@@ -65,6 +65,7 @@ import org.l2jmobius.gameserver.model.actor.appearance.PlayerAppearance;
 import org.l2jmobius.gameserver.model.actor.enums.creature.Race;
 import org.l2jmobius.gameserver.model.actor.enums.player.PlayerClass;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoPlaySettingsHolder;
+import org.l2jmobius.gameserver.model.clan.Clan;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoUseSettingsHolder;
 import org.l2jmobius.gameserver.model.actor.holders.player.ClassType;
 import org.l2jmobius.gameserver.model.actor.instance.Monster;
@@ -151,6 +152,13 @@ public class PhantomManager implements IXmlReader
 	private static final int HP_POTION_ID = 1539; // Greater Healing Potion
 	private static final int HP_POTION_COUNT = 20000;
 	private static final int HP_POTION_PERCENT = 60;
+	// Emergency rez scroll: every recruited party member carries a small stack of Scroll of Resurrection (skill 2014)
+	// so a party with no natural rezzer - an all-DPS group, or one whose only healer is also down - can still put a
+	// fallen member or the leader back up. The party brain (PhantomPartyManager) only reaches for a scroll when nobody
+	// alive can cast Resurrection itself, so a healer-led party keeps behaving exactly as before. Scrolls leave with
+	// the phantom on despawn, so nothing leaks into the economy.
+	private static final int REZ_SCROLL_ID = 737;
+	private static final int REZ_SCROLL_COUNT = 3;
 	// Buff reagents: a few support buffs consume an item per cast (the prophet's Greater Might / Greater Shield
 	// and the caster's Clarity all eat Spirit Ore, id 3031). A clientless buffer that has none silently fails the
 	// cast - the engine rejects it in checkDoCastConditions - and, since the buff never lands, re-tries it every
@@ -189,6 +197,9 @@ public class PhantomManager implements IXmlReader
 	// How many (cheapest) candidate items to keep per slot/grade, so phantoms vary their look without
 	// pulling in rare/expensive drops.
 	private static final int CANDIDATES_PER_SLOT = 6;
+	// Recruited members should still use strong, role-correct weapons, but choosing the single most expensive
+	// template made every member of a role/grade look identical. Roll among the strongest few compatible items.
+	private static final int PARTY_WEAPON_CANDIDATES = 6;
 	// Safety ceiling on total live phantom Player objects (each is far heavier than an NPC fake player).
 	private static final int MAX_PHANTOMS = 200;
 	// Proximity dormancy: a phantom only runs the (costly) auto-hunt while a real, client-connected player
@@ -213,9 +224,10 @@ public class PhantomManager implements IXmlReader
 	private static final int REGULAR_CHANCE_DEFAULT = 25;
 	// Safety ceiling on auto-generated regulars per population (regularCount), so a stray config can't flood one.
 	private static final int MAX_AUTO_REGULARS = 30;
-	// Mage combat: casters don't move under AutoPlay, so a faster tick positions them. They hold at
-	// CAST_RANGE to nuke; when MP drops below CAST_MP_PERCENT they melee the target until MP recovers
-	// (a pure caster is otherwise passive with no MP). TOLERANCE stops constant micro-repositioning.
+	// Mage combat: casters don't move under AutoPlay, so a faster tick positions them. They walk IN to within
+	// CAST_RANGE to nuke and then stand and cast (never backing off as the mob closes - that kites indefinitely);
+	// when MP drops below CAST_MP_PERCENT they break off to rest (a pure caster is otherwise passive with no MP).
+	// TOLERANCE is the casting-range slack that stops constant micro-repositioning.
 	private static final long MAGE_TICK_INTERVAL = 1000;
 	private static final int MAGE_CAST_RANGE = 650;
 	private static final int MAGE_RANGE_TOLERANCE = 150;
@@ -265,6 +277,7 @@ public class PhantomManager implements IXmlReader
 	// does, re-enable this and pass it as the `skip` set in gear()/gearParty() again.
 	// private static final Set<Integer> ORC_CASTER_ARMOR_SKIP = Set.of(445, 474);
 	private static volatile boolean _gearBuilt = false;
+	private static volatile int _gearVersion = -1;
 
 	/**
 	 * A buddy is a support-class phantom that idles in a town (no auto-hunt) until a real player whispers it,
@@ -354,7 +367,7 @@ public class PhantomManager implements IXmlReader
 		DANCER(false, BuddyRole.NONE, ArmorType.HEAVY), // Bladedancer: dual-wield melee that keeps the dances running (Heavy + dual swords is the retail standard)
 		NUKER(true, BuddyRole.NONE, ArmorType.MAGIC),
 		HEALER(true, BuddyRole.ELDER, ArmorType.MAGIC), // Elven Elder kit (heals + recharge + Resurrection, learned naturally from its class tree)
-		BUFFER(true,  ddyRole.PROPHET, ArmorType.MAGIC), // Prophet fighter-buff kit
+		BUFFER(true, BuddyRole.PROPHET, ArmorType.MAGIC), // Prophet fighter-buff kit
         BOUNTY_HUNTER(false, BuddyRole.BOUNTY_HUNTER, ArmorType.HEAVY); // Bounty Hunter: spoils stuff, shares loot
 
         final boolean mage;
@@ -417,7 +430,6 @@ public class PhantomManager implements IXmlReader
 				case "dagger":
 				case "rogue":
 				case "th":
-				case "dwarf":
 				case "assassin":
 				{
 					return DAGGER;
@@ -494,12 +506,14 @@ public class PhantomManager implements IXmlReader
 			return DPS_ROLES[Rnd.get(DPS_ROLES.length)];
 		}
 
+		// A generic "dd"/"dps" rolls only PHYSICAL damage dealers. NUKER is deliberately excluded: a caster brings its
+		// own positioning/MP needs and is not what most players expect from a plain "dd", so it comes only from an
+		// explicit "nuker"/"mage" request (PartyRole.fromToken), never from the generic roll.
 		private static final PartyRole[] DPS_ROLES =
 		{
 			WARRIOR,
 			ARCHER,
 			DAGGER,
-			NUKER,
 			MONK
 		};
 	}
@@ -521,14 +535,18 @@ public class PhantomManager implements IXmlReader
 		return valid.isEmpty() ? null : valid.get(Rnd.get(valid.size()));
 	}
 
-	/** The playable races a generic damage-dealer can be rolled from, so a bulk "N dd" call spreads across races. */
+	/**
+	 * The playable races a generic damage-dealer can be rolled from, so a bulk "N dd" call spreads across races.
+	 * Dwarves are deliberately EXCLUDED: their only damage archetype is a blunt/heavy melee that most players do not
+	 * want filling a generic DD slot - they are wanted as a spoiler, not a nuker/archer stand-in. A dwarf is still
+	 * recruited when asked for explicitly ("dwarf dd", or the "spoiler" token -> the Bounty Hunter line).
+	 */
 	private static final Race[] DPS_RACES =
 	{
 		Race.HUMAN,
 		Race.ELF,
 		Race.DARK_ELF,
-		Race.ORC,
-		Race.DWARF
+		Race.ORC
 	};
 
 	/**
@@ -821,7 +839,15 @@ public class PhantomManager implements IXmlReader
 	public static boolean isRequestableByName(PlayerClass pc)
 	{
 		final int depth = classDepth(pc);
-		return (depth >= 2) || ((depth == 1) && (pc.name().indexOf('_') >= 0));
+		if ((depth >= 2) || ((depth == 1) && (pc.name().indexOf('_') >= 0)))
+		{
+			return true;
+		}
+		// Distinctive single-word 1st classes. Most single-word 1st class names ("warrior", "knight", "rogue",
+		// "assassin", "wizard") are role tokens that PartyRole.fromToken already owns, so they stay race-flexible
+		// roles - but nothing calls itself a scavenger or an artisan, and without these the dwarf 1st classes were
+		// reachable only by naming their 2nd class and letting the level demote it ("bounty hunter lvl 25").
+		return (pc == PlayerClass.SCAVENGER) || (pc == PlayerClass.ARTISAN);
 	}
 
 	/**
@@ -885,6 +911,8 @@ public class PhantomManager implements IXmlReader
 		final List<Regular> regulars = new ArrayList<>(); // fixed identities that recur in this area (authored + auto)
 		int regularCount; // how many stable regulars to auto-generate for this area (0 = none / authored only)
 		int regularChance = REGULAR_CHANCE_DEFAULT; // % chance a spawn uses a regular (only if regulars exist)
+		String botClan = ""; // "" = none, "random" = a random bot clan, else a bot clan key (BotClans.xml)
+		int botClanChance = 100; // % chance a spawned field hunter here wears botClan (only when botClan is set)
 		boolean active; // phantoms currently spawned (a real player is in range)
 		long emptySince; // when the last observer left this area (0 while a player is near)
 	}
@@ -1028,6 +1056,8 @@ public class PhantomManager implements IXmlReader
 			population.role = BuddyRole.fromString(set.getString("role", ""));
 			population.regularChance = set.getInt("regularChance", REGULAR_CHANCE_DEFAULT);
 			population.regularCount = set.getInt("regularCount", 0);
+			population.botClan = set.getString("botClan", "").trim();
+			population.botClanChance = Math.max(0, Math.min(100, set.getInt("botClanChance", 100)));
 			forEach(populationNode, "point", pointNode ->
 			{
 				final StatSet p = new StatSet(parseAttributes(pointNode));
@@ -1950,6 +1980,28 @@ public class PhantomManager implements IXmlReader
 	}
 
 	/**
+	 * Joins a field/town hunter to its population's bot clan, if one is configured. {@code botClan} names a bot clan
+	 * key (or "random" for any), and {@code botClanChance} is the per-phantom probability it wears that clan, so a
+	 * population can be entirely clanned, partly clanned, or clan-free. No-op when the population sets no bot clan.
+	 */
+	private void attachBotClan(Player phantom, Population population)
+	{
+		if ((population == null) || population.botClan.isEmpty() || (Rnd.get(100) >= population.botClanChance))
+		{
+			return;
+		}
+		final Clan clan = population.botClan.equalsIgnoreCase("random") //
+			? BotClanManager.getInstance().getRandomClan() //
+			: BotClanManager.getInstance().getClanByKey(population.botClan);
+		if (clan == null)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": Population '" + population.name + "' references unknown bot clan '" + population.botClan + "'.");
+			return;
+		}
+		BotClanManager.getInstance().attach(phantom, clan);
+	}
+
+	/**
 	 * Finishes materializing an already created-or-loaded phantom {@link Player}: gears it, drops it into the
 	 * world at {@code spawnLocation}, registers it, and hands it to the buddy manager or the auto-hunt. Shared
 	 * by the population/admin path ({@link #createAndSpawn}) and the friend login-spawn path
@@ -1995,6 +2047,12 @@ public class PhantomManager implements IXmlReader
 			outfit(phantom, level, mage);
 		}
 		phantom.refreshOverloaded();
+		// Bot clan (field/town hunters only): join before entering the world so the very first CharInfo already carries
+		// the clan crest and name. Buddies and friend-summons keep their own identity and are never auto-clanned.
+		if (!role.isBuddy() && (friendOwnerId == 0))
+		{
+			attachBotClan(phantom, population);
+		}
 		enterWorld(phantom, spawnLocation);
 
 		final PhantomData data = new PhantomData(phantom, spawnLocation, population, mage, role);
@@ -2105,7 +2163,7 @@ public class PhantomManager implements IXmlReader
 		learnAllSkills(phantom);
 		buildGear();
 		gearParty(phantom, level, mage, roleForClass(phantom.getPlayerClass()));
-		PhantomBuffs.applyFullBuffs(phantom);
+		PhantomBuffs.applyFullBuffs(phantom, roleForClass(phantom.getPlayerClass()) == PartyRole.TANK);
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
 		registerAutoSkills(phantom);
@@ -2229,6 +2287,43 @@ public class PhantomManager implements IXmlReader
 	}
 
 	/**
+	 * Stocks a combat phantom with the reagents its <b>offensive</b> skills consume - most importantly the
+	 * Necromancer line's Death Spike, which eats a Cursed Bone (item 2508) per cast. Without the reagent the
+	 * engine's {@code canAffordReagent} guard rejects that cast every tick, so a field Necromancer silently
+	 * drops its main nuke and only ever casts the reagent-free fallback (Vampiric Claw). Scanned data-driven
+	 * from the skills the phantom actually knows, so it adapts to whatever class/level kit it ended up with.
+	 * This is the offensive counterpart to {@link #giveBuffReagents}: it stocks only attack/debuff skills, so
+	 * the two never double-count. Must run AFTER the skill tree is learned.
+	 * @param phantom the combat phantom (field hunter or recruited party fighter/caster)
+	 */
+	private void giveCombatReagents(Player phantom)
+	{
+		final Set<Integer> reagents = new HashSet<>();
+		for (Skill skill : phantom.getAllSkills())
+		{
+			if ((skill == null) || skill.isPassive() || (skill.getItemConsumeId() <= 0) || (skill.getItemConsumeCount() <= 0))
+			{
+				continue;
+			}
+			// Offensive only (a damaging nuke has a negative effectPoint; a debuff is flagged as such). The
+			// beneficial buffs and heals are stocked by giveBuffReagents, so this inverse split covers every
+			// reagent-consuming skill exactly once.
+			if ((skill.getEffectPoint() < 0) || skill.isDebuff())
+			{
+				reagents.add(skill.getItemConsumeId());
+			}
+		}
+		for (int reagentId : reagents)
+		{
+			phantom.getInventory().addItem(ItemProcessType.REWARD, reagentId, BUFF_REAGENT_COUNT, phantom, null);
+		}
+		if (!reagents.isEmpty())
+		{
+			LOGGER.info(getClass().getSimpleName() + ": Stocked " + phantom.getName() + " with combat reagents " + reagents + " (x" + BUFF_REAGENT_COUNT + " each).");
+		}
+	}
+
+	/**
 	 * Advances a phantom from its base class to the occupation its level warrants by walking the class
 	 * tree, choosing a random in-archetype branch at each transfer: 1st at 20+, 2nd at 40+, 3rd at 76+.
 	 * @param phantom the phantom (created as a base fighter or mage)
@@ -2328,6 +2423,10 @@ public class PhantomManager implements IXmlReader
 		phantom.getAutoUseSettings().setAutoPotionItem(HP_POTION_ID);
 		phantom.getAutoPlaySettings().setAutoPotionPercent(HP_POTION_PERCENT);
 
+		// Offensive reagents: the Necromancer line's Death Spike eats a Cursed Bone per cast; stock it (and any
+		// other reagent-consuming nuke this kit knows) so the main nuke actually fires instead of being skipped.
+		giveCombatReagents(phantom);
+
 		// Armor: a full matching set (Karmian / Mithril / Full Plate, ...) for the loadout's family, so a field
 		// hunter wears a coherent outfit instead of a random per-slot mix. Fighters roll light or heavy for variety.
 		final ArmorType family = mage ? ArmorType.MAGIC : (Rnd.get(100) < 55 ? ArmorType.LIGHT : ArmorType.HEAVY);
@@ -2351,9 +2450,13 @@ public class PhantomManager implements IXmlReader
 	private void equipArmorSet(Player phantom, ArmorType family, CrystalType grade, int enchant, boolean wantShield)
 	{
 		final FakePlayerArmorSets.Outfit outfit = FakePlayerArmorSets.random(family, grade);
-		if (outfit == null)
+		final ItemTemplate chest = (outfit == null) ? null : ItemData.getInstance().getTemplate(outfit.chest);
+		// No set for this family/grade, OR the rolled set's chest can't actually be worn by this phantom (an
+		// academy-gated set like Clan Oath - pledgeClass condition no phantom meets - would otherwise be added to the
+		// bag and left unequipped). Sets are uniform, so the chest is a reliable proxy for the whole set. Fall back to
+		// the best per-slot pieces (body family-correct, extremities agnostic), each guarded the same way.
+		if (!canEquip(phantom, chest))
 		{
-			// No set for this family/grade - fall back to best per-slot (body family-correct, extremities agnostic).
 			for (BodyPart slot : GEAR_SLOTS)
 			{
 				if (slot == BodyPart.R_HAND)
@@ -2361,14 +2464,18 @@ public class PhantomManager implements IXmlReader
 					continue;
 				}
 				final ItemTemplate piece = bestArmor(slot, grade, family, null);
-				if (piece != null)
+				if (canEquip(phantom, piece))
 				{
 					equip(phantom, piece, enchant);
 				}
 			}
 			if (wantShield)
 			{
-				equipPiece(phantom, bestEquip(grade, item -> (item instanceof Armor) && (((Armor) item).getItemType() == ArmorType.SHIELD)), enchant);
+				final ItemTemplate shield = bestEquip(grade, item -> (item instanceof Armor) && (((Armor) item).getItemType() == ArmorType.SHIELD));
+				if (canEquip(phantom, shield))
+				{
+					equip(phantom, shield, enchant);
+				}
 			}
 			return;
 		}
@@ -2417,11 +2524,11 @@ public class PhantomManager implements IXmlReader
 	 * randomly skips helmet/gloves/boots, and equips no jewelry or shield - leaving a "tank" badly under-armored.
 	 * Here a party member gets:
 	 * <ul>
-	 * <li>a <b>best-in-grade</b> weapon for its role (sword / bow / dagger / magic staff) + matching shots (+ arrows
-	 * for an archer);</li>
+	 * <li>a <b>strong, varied</b> weapon for its role (sword / bow / dagger / fist / dual / magic weapon) +
+	 * matching shots (+ arrows for an archer);</li>
 	 * <li>a <b>full</b> armor set - every slot, no random gaps - best in grade (a TANK prefers HEAVY);</li>
 	 * <li>all five <b>jewelry</b> slots (necklace + two earrings + two rings) for the P./M.Def the ambient bots lack;</li>
-	 * <li>a <b>shield</b> for the TANK;</li>
+	 * <li>a <b>shield</b> for a TANK/SINGER, or for a caster that rolls a one-handed weapon;</li>
 	 * <li>a chance the whole weapon+armor kit is <b>enchanted</b> (a modest uniform level), so some read as geared
 	 * players rather than fresh dingbats.</li>
 	 * </ul>
@@ -2436,8 +2543,8 @@ public class PhantomManager implements IXmlReader
 		final int enchantMax = Math.max(enchantMin, FakePlayersConfig.FAKE_PLAYER_RECRUIT_ENCHANT_MAX);
 		final int enchant = (Rnd.get(100) < FakePlayersConfig.FAKE_PLAYER_RECRUIT_ENCHANT_CHANCE) ? Rnd.get(enchantMin, enchantMax + 1) : 0;
 
-		// Weapon (best in grade for the role) + matching shots (+ arrows for a bow).
-		final ItemTemplate weapon = partyWeapon(role, mage, grade);
+		// Weapon (randomly chosen among the strongest role-compatible options) + matching shots (+ arrows for a bow).
+		final ItemTemplate weapon = partyWeapon(phantom.getPlayerClass(), role, mage, grade);
 		if (weapon != null)
 		{
 			equip(phantom, weapon, enchant);
@@ -2459,11 +2566,19 @@ public class PhantomManager implements IXmlReader
 		phantom.getAutoUseSettings().setAutoPotionItem(HP_POTION_ID);
 		phantom.getAutoPlaySettings().setAutoPotionPercent(HP_POTION_PERCENT);
 
+		// Fallback rez: a few Scrolls of Resurrection the party brain uses only when the group has no living skill-rezzer.
+		phantom.getInventory().addItem(ItemProcessType.REWARD, REZ_SCROLL_ID, REZ_SCROLL_COUNT, phantom, null);
+
+		// Offensive reagents: a recruited Necromancer's Death Spike eats a Cursed Bone per cast - stock it so a
+		// party caster uses its main nuke rather than dropping to the reagent-free fallback.
+		giveCombatReagents(phantom);
+
 		// Full matching armor set in the class's practical armor family (Heavy for tanks/warriors/singer/dancer,
 		// Light for archer/dagger/monk, robe for casters) - a coherent set (Karmian / Full Plate, ...) rather than a
-		// random per-slot mix, with the tank/singer also getting the set's shield. Any slot the set omits is filled
-		// with the best in-family/generic piece.
-		equipArmorSet(phantom, role.armor, grade, enchant, (role == PartyRole.TANK) || (role == PartyRole.SINGER));
+		// random per-slot mix. A shield is paired only with a one-handed weapon and a class-appropriate loadout:
+		// tanks/singers, casters, and Dwarven blunt users. Any slot the set omits is filled with the best
+		// in-family/generic piece.
+		equipArmorSet(phantom, role.armor, grade, enchant, shouldEquipShield(role, mage, weapon));
 
 		// Jewelry: necklace + two earrings + two rings (matched by body part; the engine fills both ears/fingers).
 		equipJewelry(phantom, BodyPart.NECK, grade, 1);
@@ -2498,16 +2613,36 @@ public class PhantomManager implements IXmlReader
 		LOGGER.info("PARTY-RAID GEAR " + role + " '" + phantom.getName() + "' lvl" + level + " grade=" + gradeForLevel(level) + extra + " | equipped: " + sb);
 	}
 
-	/** Best-in-grade weapon for a party role: bow/dagger for the ranged/rogue roles, magic staff for casters, else a sword. */
-	private static ItemTemplate partyWeapon(PartyRole role, boolean mage, CrystalType grade)
+	/**
+	 * Shields are useful only when the rolled weapon leaves the left hand free and the class normally uses one.
+	 * Dagger damage dealers intentionally remain shieldless: their practical Interlude loadout prioritizes
+	 * light-armor evasion. WARRIOR is safe here because its dual, polearm, fist, and two-handed specialists
+	 * fail the R_HAND guard; this admits only Dwarven one-handed blunts and one-handed fallback swords.
+	 */
+	private static boolean shouldEquipShield(PartyRole role, boolean mage, ItemTemplate weapon)
+	{
+		if ((weapon == null) || (weapon.getBodyPart() != BodyPart.R_HAND))
+		{
+			return false;
+		}
+		return mage || (role == PartyRole.TANK) || (role == PartyRole.SINGER) || (role == PartyRole.WARRIOR);
+	}
+
+	/**
+	 * Strong, varied weapon for a recruited member. Broad roles keep strict weapon families, while WARRIOR is
+	 * refined by the resolved occupation so its specialists do not all collapse to swords.
+	 */
+	private static ItemTemplate partyWeapon(PlayerClass playerClass, PartyRole role, boolean mage, CrystalType grade)
 	{
 		if (mage)
 		{
-			return bestEquip(grade, item -> item.isMagicWeapon() && (item.getBodyPart() == BodyPart.LR_HAND));
+			// Magic melee weapons are valid caster weapons too. Keep both one-handed (R_HAND) and two-handed
+			// (LR_HAND) templates; gearParty adds a shield only for the former.
+			return randomTopEquip(grade, item -> item.isMagicWeapon() && ((item.getBodyPart() == BodyPart.R_HAND) || (item.getBodyPart() == BodyPart.LR_HAND)));
 		}
 		if (role == PartyRole.ARCHER)
 		{
-			final ItemTemplate bow = bestEquip(grade, item -> (item instanceof Weapon) && (((Weapon) item).getItemType() == WeaponType.BOW));
+			final ItemTemplate bow = randomTopEquip(grade, item -> isPhysicalWeapon(item, WeaponType.BOW));
 			if (bow != null)
 			{
 				return bow;
@@ -2515,7 +2650,7 @@ public class PhantomManager implements IXmlReader
 		}
 		else if (role == PartyRole.DAGGER)
 		{
-			final ItemTemplate dagger = bestEquip(grade, item -> (item instanceof Weapon) && (((Weapon) item).getItemType() == WeaponType.DAGGER));
+			final ItemTemplate dagger = randomTopEquip(grade, item -> isPhysicalWeapon(item, WeaponType.DAGGER));
 			if (dagger != null)
 			{
 				return dagger;
@@ -2523,9 +2658,8 @@ public class PhantomManager implements IXmlReader
 		}
 		else if (role == PartyRole.DANCER)
 		{
-			// Dances hard-require equipped dual swords (<using kind="DUAL"/> in the skill data) - a dancer holding
-			// anything else cannot dance at all. Duals exist from D grade up; bestEquip steps down a grade if needed.
-			final ItemTemplate dual = bestEquip(grade, item -> (item instanceof Weapon) && (((Weapon) item).getItemType() == WeaponType.DUAL));
+			// Dances hard-require equipped dual swords (<using kind="DUAL"/> in the skill data).
+			final ItemTemplate dual = randomTopEquip(grade, item -> isPhysicalWeapon(item, WeaponType.DUAL));
 			if (dual != null)
 			{
 				return dual;
@@ -2533,13 +2667,22 @@ public class PhantomManager implements IXmlReader
 		}
 		else if (role == PartyRole.MONK)
 		{
-			// Fist fighters (Tyrant / Grand Khavatari) wield fist weapons - the DUALFIST/FIST types.
-			final ItemTemplate fist = bestEquip(grade, item -> (item instanceof Weapon) && ((((Weapon) item).getItemType() == WeaponType.DUALFIST) || (((Weapon) item).getItemType() == WeaponType.FIST)));
+			// Tyrant / Grand Khavatari force skills require hand-to-hand weapons.
+			final ItemTemplate fist = randomTopEquip(grade, item -> isPhysicalWeapon(item, WeaponType.DUALFIST) || isPhysicalWeapon(item, WeaponType.FIST));
 			if (fist != null)
 			{
 				return fist;
 			}
 		}
+		else if (role == PartyRole.WARRIOR)
+		{
+			final ItemTemplate specialist = warriorWeapon(playerClass, grade);
+			if (specialist != null)
+			{
+				return specialist;
+			}
+		}
+		// Default fighter weapon. A TANK or SINGER needs a one-handed sword so its shield remains equipped.
 		else if (role == PartyRole.BOUNTY_HUNTER)
 		{
 			final ItemTemplate blunt = bestEquip(grade, item -> (item instanceof Weapon) && (((Weapon) item).getItemType() == WeaponType.BLUNT));
@@ -2550,7 +2693,44 @@ public class PhantomManager implements IXmlReader
 		// Sword fallback (and the default melee weapon). A TANK or SINGER needs a ONE-handed sword so its shield fits
 		// the left hand; a two-handed sword would otherwise be unequipped when the shield goes on.
 		final boolean oneHandOnly = (role == PartyRole.TANK) || (role == PartyRole.SINGER);
-		return bestEquip(grade, item -> (item instanceof Weapon) && (((Weapon) item).getItemType() == WeaponType.SWORD) && (!oneHandOnly || (item.getBodyPart() == BodyPart.R_HAND)));
+		return randomTopEquip(grade, item -> isPhysicalWeapon(item, WeaponType.SWORD) && (!oneHandOnly || (item.getBodyPart() == BodyPart.R_HAND)));
+	}
+
+	/**
+	 * Primary weapon used by each occupation currently grouped under WARRIOR. Secondary technically-usable weapon
+	 * families are intentionally omitted: recruits should look and fight like their class, not sample every mastery.
+	 */
+	private static ItemTemplate warriorWeapon(PlayerClass playerClass, CrystalType grade)
+	{
+		if (playerClass == null)
+		{
+			return null;
+		}
+		final String name = playerClass.name().toLowerCase();
+		if (nameHas(name, "gladiator", "duelist"))
+		{
+			return randomTopEquip(grade, item -> isPhysicalWeapon(item, WeaponType.DUAL));
+		}
+		if (nameHas(name, "warlord", "dreadnought"))
+		{
+			return randomTopEquip(grade, item -> isPhysicalWeapon(item, WeaponType.POLE));
+		}
+		if (nameHas(name, "raider", "destroyer", "titan"))
+		{
+			return randomTopEquip(grade, item -> isPhysicalWeapon(item, WeaponType.SWORD) && (item.getBodyPart() == BodyPart.LR_HAND));
+		}
+		if (playerClass.getRace() == Race.DWARF)
+		{
+			// Dwarves can learn polearm skills, but their normal single-target weapon and blunt-only stuns use blunts.
+			return randomTopEquip(grade, item -> isPhysicalWeapon(item, WeaponType.BLUNT) && (item.getBodyPart() == BodyPart.R_HAND));
+		}
+		return null; // base/generic fighter: use the default physical sword fallback
+	}
+
+	/** Exact physical weapon family, excluding caster-oriented magic variants of the same item type. */
+	private static boolean isPhysicalWeapon(ItemTemplate item, WeaponType type)
+	{
+		return (item instanceof Weapon) && !item.isMagicWeapon() && (((Weapon) item).getItemType() == type);
 	}
 
 	/**
@@ -2605,6 +2785,38 @@ public class PhantomManager implements IXmlReader
 	}
 
 	/**
+	 * A random item among the strongest role-compatible weapon templates in the requested grade. This keeps recruited
+	 * members combat-capable without making every archer, caster, tank, or melee member use one deterministic item.
+	 * Falls through to lower grades only when the requested grade has no compatible player gear at all.
+	 */
+	private static ItemTemplate randomTopEquip(CrystalType desired, Predicate<ItemTemplate> filter)
+	{
+		CrystalType grade = desired;
+		while (grade != null)
+		{
+			final List<ItemTemplate> candidates = new ArrayList<>();
+			for (ItemTemplate item : ItemData.getInstance().getAllItems())
+			{
+				if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0) || (item.getCrystalType() != grade) || !FakePlayerGearFilter.isPlayerGear(item))
+				{
+					continue;
+				}
+				if (filter.test(item))
+				{
+					candidates.add(item);
+				}
+			}
+			if (!candidates.isEmpty())
+			{
+				candidates.sort(Comparator.comparingLong(ItemTemplate::getReferencePrice).reversed().thenComparingInt(ItemTemplate::getId));
+				return candidates.get(Rnd.get(Math.min(PARTY_WEAPON_CANDIDATES, candidates.size())));
+			}
+			grade = (grade.ordinal() > 0) ? CrystalType.values()[grade.ordinal() - 1] : null;
+		}
+		return null;
+	}
+
+	/**
 	 * The best (most valuable, a good proxy for "best stats") tradeable equipable item of {@code grade} that matches
 	 * {@code filter}, stepping down a grade if none exists at the desired one. Scans the item table directly (not the
 	 * trimmed-to-cheapest ambient gear map) since party members want the strongest in grade, not the budget option.
@@ -2633,6 +2845,17 @@ public class PhantomManager implements IXmlReader
 			grade = (grade.ordinal() > 0) ? CrystalType.values()[grade.ordinal() - 1] : null;
 		}
 		return null;
+	}
+
+	/**
+	 * @return {@code true} if {@code phantom} can actually equip {@code t} right now - it is equipable AND all of the
+	 *         item's own equip conditions pass. Normal armor carries only a benign all-races {@code <player>} condition
+	 *         (always passes); this rejects the unmeetable social gates a phantom never satisfies (Clan Oath's academy
+	 *         {@code pledgeClass}, hero/noble/olympiad items), which would otherwise be added to the bag unequipped.
+	 */
+	private static boolean canEquip(Player phantom, ItemTemplate t)
+	{
+		return (t != null) && t.isEquipable() && t.checkCondition(phantom, phantom, false);
 	}
 
 	/** Adds a single template to the phantom's inventory and equips it. */
@@ -2798,16 +3021,20 @@ public class PhantomManager implements IXmlReader
 	 */
 	private static void buildGear()
 	{
-		if (_gearBuilt)
+		final int version = FakePlayerGearFilter.getVersion();
+		if (_gearBuilt && (_gearVersion == version))
 		{
 			return;
 		}
 		synchronized (FIGHTER_GEAR)
 		{
-			if (_gearBuilt)
+			final int currentVersion = FakePlayerGearFilter.getVersion();
+			if (_gearBuilt && (_gearVersion == currentVersion))
 			{
 				return;
 			}
+			FIGHTER_GEAR.clear();
+			MAGE_GEAR.clear();
 			initGearMap(FIGHTER_GEAR);
 			initGearMap(MAGE_GEAR);
 			for (ItemTemplate item : ItemData.getInstance().getAllItems())
@@ -2819,11 +3046,9 @@ public class PhantomManager implements IXmlReader
 
 				if (item instanceof Weapon)
 				{
-					// Caster pool = two-handed magic STAVES only (lrhand). Physical blades flagged
-					// is_magic_weapon (e.g. Hell Knife dagger) otherwise leak in, and a caster holding a melee
-					// blade renders with no chest/legs even when the armor itself is fine (confirmed: Elemental
-					// Tunic renders with a staff, vanishes with a Hell Knife). Staves always render with robes.
-					if (item.isMagicWeapon() && (item.getBodyPart() == BodyPart.LR_HAND))
+					// Every GM-approved weapon flagged as magic is valid for the caster loadout, including
+					// one-handed and melee-shaped magic weapons.
+					if (item.isMagicWeapon())
 					{
 						MAGE_GEAR.get(BodyPart.R_HAND).get(item.getCrystalType()).add(item);
 					}
@@ -2860,6 +3085,7 @@ public class PhantomManager implements IXmlReader
 			}
 			trimGear(FIGHTER_GEAR);
 			trimGear(MAGE_GEAR);
+			_gearVersion = currentVersion;
 			_gearBuilt = true;
 		}
 	}
@@ -2983,6 +3209,9 @@ public class PhantomManager implements IXmlReader
 		// isRegular (not a raw account check) so a phantom promoted THIS session - whose final in-memory
 		// account still reads 'phantom' - is recognized and its row kept too.
 		final boolean persistent = isRegular(data.player);
+		// Drop any bot-clan membership BEFORE storeMe() so a persistent regular's saved character row keeps clanid 0
+		// (bot-clan membership is runtime-only and rebuilt each spawn, never written to the characters table).
+		BotClanManager.getInstance().detach(data.player);
 		try
 		{
 			AutoPlayTaskManager.getInstance().stopAutoPlay(data.player);
@@ -3215,6 +3444,13 @@ public class PhantomManager implements IXmlReader
 				outfitCombat(phantom, level, role);
 			}
 			phantom.refreshOverloaded();
+			// Recruited (LFM) phantoms occasionally belong to a bot clan (BotClans.xml recruitClanChance), so a pickup
+			// group sometimes shows clan crests. Rolled before enterWorld so the first CharInfo already carries it.
+			final int recruitClanChance = BotClanManager.getInstance().getRecruitClanChance();
+			if ((recruitClanChance > 0) && (Rnd.get(100) < recruitClanChance))
+			{
+				BotClanManager.getInstance().attach(phantom, BotClanManager.getInstance().getRandomClan());
+			}
 			enterWorld(phantom, spawnLocation);
 
 			// role=NONE + recruited: skips every hunter path; population=null so the proximity deactivate never
@@ -3376,7 +3612,7 @@ public class PhantomManager implements IXmlReader
 		grantHeal(phantom, level);
 		giveBuffReagents(phantom); // Spirit Ore etc. so consumable buffs (Greater Might/Shield, Clarity) actually land
 		gearParty(phantom, level, true, role); // full caster loadout + jewelry + enchant chance, so supports survive content
-		PhantomBuffs.applyFullBuffs(phantom); // a support arrives self-buffed (Acumen/Empower etc.) too
+		PhantomBuffs.applyFullBuffs(phantom, role == PartyRole.TANK); // a support arrives self-buffed (Acumen/Empower etc.) too
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
 	}
@@ -3393,11 +3629,11 @@ public class PhantomManager implements IXmlReader
 			}
 		}
 		learnAllSkills(phantom);
-		// Recruited members gear up for real content: best-in-grade role weapon + full armor + jewelry + shield
-		// (tank) + a chance of enchant. gearParty picks the role's weapon itself (bow/dagger/staff/sword), so the
-		// old separate sword-then-swap step is gone.
+		// Recruited members gear up for real content: strong varied class-appropriate weapon + full armor + jewelry
+		// + shield (tank/one-handed caster) + a chance of enchant. gearParty resolves specialist WARRIOR weapons from
+		// the actual occupation, so Gladiators/Duelists, Warlords, Destroyers/Titans, and Dwarves keep their main type.
 		gearParty(phantom, level, role.mage, role);
-		PhantomBuffs.applyFullBuffs(phantom); // arrive already buffed for its archetype, so a fresh party isn't unbuffed
+		PhantomBuffs.applyFullBuffs(phantom, role == PartyRole.TANK); // arrive already buffed for its archetype, so a fresh party isn't unbuffed
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
 		registerAutoSkills(phantom);
@@ -3495,22 +3731,26 @@ public class PhantomManager implements IXmlReader
 		}
 	}
 
-	/** Holds a mage at casting range so AutoUse can nuke. (Out-of-MP handling lives in {@link #mageCombat}.) */
+	/**
+	 * Holds a mage within casting range so AutoUse can nuke. Walks IN when out of range; once inside range it stands
+	 * and casts and does <b>not</b> back off as the mob closes - a caster that retreats every time its own target
+	 * steps toward it kites indefinitely and wanders into fresh spawns. (Out-of-MP break-off lives in
+	 * {@link #mageCombat} via {@link #retreatMage}.)
+	 */
 	private void positionMage(Player mage, Monster target)
 	{
 		double dx = mage.getX() - target.getX();
 		double dy = mage.getY() - target.getY();
 		double distance = Math.hypot(dx, dy);
-		if (Math.abs(distance - MAGE_CAST_RANGE) <= MAGE_RANGE_TOLERANCE)
+		if (distance <= (MAGE_CAST_RANGE + MAGE_RANGE_TOLERANCE))
 		{
-			return; // already in position - stand still so AutoUse can cast
+			return; // within casting range - stand and cast; never back off just because it closed in
 		}
 		if (distance < 1)
 		{
 			distance = 1;
 		}
-		// A point MAGE_CAST_RANGE units from the target, on the line toward the mage: walks in when too far,
-		// backs off when too close.
+		// Too far to cast: close the gap to a point MAGE_CAST_RANGE units from the target, on the line toward the mage.
 		final int standX = target.getX() + (int) ((dx / distance) * MAGE_CAST_RANGE);
 		final int standY = target.getY() + (int) ((dy / distance) * MAGE_CAST_RANGE);
 		final Location destination = GeoEngine.getInstance().getValidLocation(mage, new Location(standX, standY, mage.getZ()));

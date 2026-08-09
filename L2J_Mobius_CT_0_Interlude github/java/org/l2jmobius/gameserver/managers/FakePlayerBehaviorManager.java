@@ -43,6 +43,7 @@ import org.l2jmobius.gameserver.model.StatSet;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Npc;
+import org.l2jmobius.gameserver.model.clan.Clan;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.enums.creature.Race;
 import org.l2jmobius.gameserver.model.actor.enums.player.PrivateStoreType;
@@ -488,6 +489,18 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				// Only dwarves craft, so a crafter population is locked to the Dwarven race.
 					final boolean isCrafter = (population.storeType != null) && (population.storeType.equalsIgnoreCase("CRAFT") || population.storeType.equalsIgnoreCase("MANUFACTURE"));
 					final FakePlayerAppearance look = FakePlayerAppearanceFactory.generate(population.minLevel, population.maxLevel, isCrafter ? Race.DWARF : population.race, isCrafter);
+					// A share of the town crowd belongs to a random bot clan (BotClans.xml fakePlayerClanChance), so their
+					// crest shows over their head. The live bot-clan id is stamped on the look and read by FakePlayerInfo.
+					final int fpClanChance = BotClanManager.getInstance().getFakePlayerClanChance();
+					if ((fpClanChance > 0) && (Rnd.get(100) < fpClanChance))
+					{
+						final Clan botClan = BotClanManager.getInstance().getRandomClan();
+						if (botClan != null)
+						{
+							look.setClanId(botClan.getId());
+							look.setTitle(BotClanManager.getInstance().randomTitle()); // clan members bear a generated title
+						}
+					}
 				if (population.storeType != null)
 				{
 					final String kind = population.storeType.toUpperCase();
@@ -1221,6 +1234,29 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		// Reserve the bot for this offer, but let the reservation lapse if no meet is agreed in time. Cleared
 		// the moment a meet actually starts (requestMeet) so a walking/trading bot never lapses mid-deal.
 		state.pendingDealExpire = (storeType != 0) ? (System.currentTimeMillis() + OFFER_TTL) : 0;
+		return true;
+	}
+
+	/**
+	 * Replace the stock of a deal that is already pending (e.g. after the player finally states how many they want),
+	 * so the shop opened at the meet reflects the renegotiated amount/price. Only updates an existing pending deal;
+	 * it never arms a new one, and it leaves the reservation timer untouched.
+	 * @return {@code true} if a pending deal existed and was updated
+	 */
+	public boolean updateDealStock(Npc bot, int storeType, List<FakePlayerStoreItem> stock, String title)
+	{
+		if ((bot == null) || (stock == null) || stock.isEmpty())
+		{
+			return false;
+		}
+		final BotState state = _bots.get(bot.getObjectId());
+		if ((state == null) || (state.pendingStoreType == 0))
+		{
+			return false; // no deal waiting to update
+		}
+		state.pendingStoreType = storeType;
+		state.pendingStock = stock;
+		state.pendingTitle = title;
 		return true;
 	}
 

@@ -90,6 +90,7 @@ import org.l2jmobius.gameserver.data.xml.NpcData;
 import org.l2jmobius.gameserver.data.xml.RouteData;
 import org.l2jmobius.gameserver.data.xml.NpcNameLocalisationData;
 import org.l2jmobius.gameserver.data.xml.OptionData;
+import org.l2jmobius.gameserver.data.xml.PhantomPlaystyleData;
 import org.l2jmobius.gameserver.data.xml.PetDataTable;
 import org.l2jmobius.gameserver.data.xml.PetSkillData;
 import org.l2jmobius.gameserver.data.xml.PlayerTemplateData;
@@ -120,6 +121,7 @@ import org.l2jmobius.gameserver.managers.DimensionalRiftManager;
 import org.l2jmobius.gameserver.managers.EventDropManager;
 import org.l2jmobius.gameserver.managers.FakePlayerBehaviorManager;
 import org.l2jmobius.gameserver.managers.FakePlayerChatManager;
+import org.l2jmobius.gameserver.managers.BotClanManager;
 import org.l2jmobius.gameserver.managers.PhantomBuddyManager;
 import org.l2jmobius.gameserver.managers.PhantomManager;
 import org.l2jmobius.gameserver.managers.FishingChampionshipManager;
@@ -294,6 +296,7 @@ public class GameServer
 		RouteData.getInstance();
 		FakePlayerBehaviorManager.getInstance();
 		PhantomManager.getInstance();
+		PhantomPlaystyleData.getInstance();
 		PhantomBuddyManager.getInstance();
 		StaticObjectData.getInstance();
 		CastleManager.getInstance().loadInstances();
@@ -313,6 +316,7 @@ public class GameServer
 		printSection("Cache");
 		HtmCache.getInstance();
 		CrestTable.getInstance();
+		BotClanManager.getInstance(); // after ClanTable + CrestTable: builds synthetic bot clans and injects their crests
 		TeleporterData.getInstance();
 		PartyMatchWaitingList.getInstance();
 		PartyMatchRoomList.getInstance();

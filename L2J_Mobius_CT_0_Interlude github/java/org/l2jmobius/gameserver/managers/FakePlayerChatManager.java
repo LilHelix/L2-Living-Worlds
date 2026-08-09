@@ -109,16 +109,22 @@ public class FakePlayerChatManager implements IXmlReader
 	{
 		final String side; // Bot perspective: SELL means bot sells to player, BUY means bot buys from player.
 		final String item;
+		final int itemId;
 		final int count;
 		final int unitPrice;
 		final long totalPrice;
+		// A stackable deal where the player named no amount: the bot asks "how many?" and we hold off on a firm
+		// count until they answer. Cleared once the player states an amount (see the whisper handler).
+		final boolean needsCount;
 
-		BrainDealContext(String side, String item, int count, int unitPrice)
+		BrainDealContext(String side, String item, int itemId, int count, int unitPrice, boolean needsCount)
 		{
 			this.side = side;
 			this.item = item;
+			this.itemId = itemId;
 			this.count = Math.max(1, count);
 			this.unitPrice = Math.max(1, unitPrice);
+			this.needsCount = needsCount;
 			totalPrice = (long) this.count * this.unitPrice;
 		}
 	}
@@ -334,6 +340,10 @@ public class FakePlayerChatManager implements IXmlReader
 			return;
 		}
 
+		// If this bot has a pending deal that was waiting on a quantity ("how many?"), read the amount from this
+		// whisper first and lock it in, so the deal context the brain sees (and the shop opened later) reflect it.
+		maybeSetDealCount(player, fpcName, bot, message);
+
 		// LLM brain hook (private whisper). Falls back to canned chat if the bridge is offline.
 		// The bot's whereabouts go along so it can truthfully answer "where are you?".
 		final String aiReply = askBrain(player.getName(), fpcName, message, bot);
@@ -501,8 +511,12 @@ public class FakePlayerChatManager implements IXmlReader
 
 		// Player selling -> bot buys it; player buying -> bot sells it.
 		final int storeType = playerSelling ? PrivateStoreType.BUY.getId() : PrivateStoreType.SELL.getId();
-		final int requestedCount = parseTradeQuantity(matcher.group(2), item);
-		final List<FakePlayerStoreItem> stock = playerSelling ? FakePlayerStoreFactory.dealBuyStock(item.getId(), 0, requestedCount) : FakePlayerStoreFactory.dealSellStock(item.getId(), 0, requestedCount);
+		final int requestedCount = parseTradeQuantity(FakePlayerChatParsing.stripStatedPrices(matcher.group(2)), item);
+		// Honor the price the player named in the ad ("wtb ssd 300 adena") when they gave one; the factory clamps it
+		// into a sane band around the item's value, so the bot deals at the desired price without opening an exploit.
+		// A bare quantity is never read as a price; 0 here means "no stated price", so the factory auto-prices.
+		final int playerUnitPrice = FakePlayerChatParsing.parseTradeUnitPrice(matcher.group(2));
+		final List<FakePlayerStoreItem> stock = playerSelling ? FakePlayerStoreFactory.dealBuyStock(item.getId(), playerUnitPrice, requestedCount) : FakePlayerStoreFactory.dealSellStock(item.getId(), playerUnitPrice, requestedCount);
 		if (stock.isEmpty())
 		{
 			return;
@@ -516,17 +530,26 @@ public class FakePlayerChatManager implements IXmlReader
 		final int unit = stock.get(0).getPrice();
 		final int actualCount = stock.get(0).getCount();
 		final String botSide = playerSelling ? "BUY" : "SELL";
-		final String deal = (playerSelling ? "buy their " : "sell them ")
-			+ (actualCount > 0 ? (actualCount + "x ") : "")
-			+ item.getName() + " for about " + unit
-			+ " adena each; state your price and ask if they want to deal and where to meet (gatekeeper, warehouse or shop) - do not commit to walking anywhere yet";
+		// A stackable good with no amount named: ask how many rather than pushing a random stack, and reflect the
+		// answer in the real shop later (see the whisper handler). A non-stackable is always a single piece.
+		final boolean needsCount = item.isStackable() && (requestedCount <= 0);
+		final String unitText = FakePlayerStorePricing.priceText(unit);
+		final String deal = needsCount //
+			? ((playerSelling ? "buy their " : "sell them ") + item.getName() + " for about " + unitText
+				+ " adena each; ask HOW MANY they want and state your price, and ask if they want to deal and where to meet"
+				+ " (gatekeeper, warehouse or shop) - do not commit to an amount or to walking anywhere yet") //
+			: ((playerSelling ? "buy their " : "sell them ")
+				+ (actualCount > 0 ? (FakePlayerStorePricing.priceText(actualCount) + "x ") : "")
+				+ item.getName() + " for about " + unitText
+				+ " adena each; state your price and ask if they want to deal and where to meet (gatekeeper, warehouse or shop) - do not commit to walking anywhere yet");
 		final String fpcName = bot.getName();
-		final BrainDealContext dealContext = new BrainDealContext(botSide, item.getName(), actualCount, unit);
+		final BrainDealContext dealContext = new BrainDealContext(botSide, item.getName(), item.getId(), actualCount, unit, needsCount);
 		ACTIVE_DEALS.put(dealKey(player.getName(), fpcName), dealContext);
 		final String line = callBridge(fpcName, "OFFER", player.getName(), "", text, nearestLocation(bot), deal, dealContext, BotIdentity.of(bot));
-		sendChat(player, fpcName, (line == null) || line.isEmpty() //
-			? ("saw ur post - i " + (playerSelling ? "buy " : "sell ") + item.getName() + " for " + unit + " adena each, wanna deal? where u wanna meet?") //
-			: line);
+		final String fallback = needsCount //
+			? ("saw ur post - i " + (playerSelling ? "buy " : "sell ") + item.getName() + " for " + unitText + " adena each, how many u want? and where u wanna meet?") //
+			: ("saw ur post - i " + (playerSelling ? "buy " : "sell ") + item.getName() + " for " + unitText + " adena each, wanna deal? where u wanna meet?");
+		sendChat(player, fpcName, (line == null) || line.isEmpty() ? fallback : line);
 		TRADE_OFFERS_THIS_MINUTE.incrementAndGet();
 	}
 
@@ -561,6 +584,49 @@ public class FakePlayerChatManager implements IXmlReader
 	private static String dealKey(String playerName, String fpcName)
 	{
 		return ((playerName == null ? "" : playerName.trim().toLowerCase()) + "|" + (fpcName == null ? "" : fpcName.trim().toLowerCase()));
+	}
+
+	/**
+	 * When a stackable deal is still waiting on an amount (the bot asked "how many?"), read the quantity the player
+	 * just whispered and lock it into both the bot's pending stock and the shared deal context. Priced numbers are
+	 * stripped first so "5k, 300 adena each" is read as 5000, not 300. Once set, the deal no longer needs a count,
+	 * so the real shop opened at meet time (from {@code getPendingDealCount}) reflects the agreed amount. No-op when
+	 * there is no pending deal, the deal already has a count, the item is not stackable, or no amount was stated.
+	 */
+	private void maybeSetDealCount(Player player, String fpcName, Npc bot, String message)
+	{
+		if ((bot == null) || (player == null) || (message == null))
+		{
+			return;
+		}
+		final String key = dealKey(player.getName(), fpcName);
+		final BrainDealContext deal = ACTIVE_DEALS.get(key);
+		if ((deal == null) || !deal.needsCount)
+		{
+			return;
+		}
+		final ItemTemplate item = ItemData.getInstance().getTemplate(deal.itemId);
+		if ((item == null) || !item.isStackable())
+		{
+			return;
+		}
+		final int spoken = FakePlayerChatParsing.parseSpokenQuantity(FakePlayerChatParsing.stripStatedPrices(message));
+		if (spoken == 0)
+		{
+			return; // no amount in this line - keep waiting / let the bot ask again
+		}
+		// A vague "some / a stack / whatever" answer means "a normal amount", so let the factory auto-size (0).
+		final int requested = (spoken == FakePlayerChatParsing.SPOKEN_QUANTITY_DEFAULT) ? 0 : spoken;
+		final boolean botSells = "SELL".equalsIgnoreCase(deal.side);
+		final List<FakePlayerStoreItem> stock = botSells ? FakePlayerStoreFactory.dealSellStock(deal.itemId, deal.unitPrice, requested) : FakePlayerStoreFactory.dealBuyStock(deal.itemId, deal.unitPrice, requested);
+		if (stock.isEmpty())
+		{
+			return;
+		}
+		final int storeType = botSells ? PrivateStoreType.SELL.getId() : PrivateStoreType.BUY.getId();
+		final String title = FakePlayerStoreFactory.title(botSells ? "SELL" : "BUY", stock);
+		FakePlayerBehaviorManager.getInstance().updateDealStock(bot, storeType, stock, title);
+		ACTIVE_DEALS.put(key, new BrainDealContext(deal.side, deal.item, deal.itemId, stock.get(0).getCount(), stock.get(0).getPrice(), false));
 	}
 
 	private static int parseTradeQuantity(String phrase, ItemTemplate item)
@@ -702,6 +768,12 @@ public class FakePlayerChatManager implements IXmlReader
 		putClassAlias("sws", "swordsinger");
 		putClassAlias("bd", "bladedancer");
 		putClassAlias("spectral", "spectral dancer");
+		// "spoiler" is what players ask for when they want a dwarf: it names the Bounty Hunter (Scavenger) line, and
+		// the level walk resolves it to Scavenger / Bounty Hunter / Fortune Seeker for the party's level. This is the
+		// only way a dwarf now joins as a damage dealer - the generic "dd" pool no longer rolls them (see DPS_RACES).
+		putClassAlias("spoiler", "bounty hunter");
+		putClassAlias("spoil", "bounty hunter");
+		putClassAlias("bh", "bounty hunter");
 		// Build the exact-match pattern from every key (names + aliases), longest first so a multi-word class wins
 		// over a shorter substring. Trailing "s?" so a plural request ("2 bishops", "3 hawkeyes") still matches.
 		final List<String> keys = new ArrayList<>(CLASS_BY_NAME.keySet());
@@ -971,15 +1043,54 @@ public class FakePlayerChatManager implements IXmlReader
 		{
 			return recruits;
 		}
+		// The brain answers with bare role words, so any race the player asked for ("lf dwarf dd") survives only in
+		// the ORIGINAL text - carry it across or the request silently loses its race and spawns the wrong one.
+		final Race race = soleRaceIn(text);
 		for (String token : reply.toLowerCase().split("[^a-z]+"))
 		{
-			final PartyRole role = PartyRole.fromToken(token);
-			if ((role != null) && (recruits.size() < 8))
+			if (recruits.size() >= 8)
 			{
-				recruits.add(new Recruit(role, 0));
+				break;
+			}
+			// Same rule as the deterministic path (Trello #11): a generic "dd" is re-rolled FRESH per slot, so a
+			// bulk call fills with a varied mix. Resolving it once through fromToken would pick ONE random
+			// archetype for every slot - and would ignore the race, which is how "dwarf dd" produced an archer.
+			if (isGenericDd(token))
+			{
+				final Recruit dd = PhantomManager.rollDpsRecruit(((race != null) && (PhantomManager.randomDpsForRace(race) != null)) ? race : null);
+				if (dd != null)
+				{
+					recruits.add(dd);
+				}
+				continue;
+			}
+			final PartyRole role = PartyRole.fromToken(token);
+			if (role != null)
+			{
+				// Honour the race only where that archetype actually exists for it (no orc archers).
+				recruits.add(((race != null) && PhantomManager.comboExists(race, role)) ? new Recruit(role, 0, race) : new Recruit(role, 0));
 			}
 		}
 		return recruits;
+	}
+
+	/** The one race adjective in a free-form party call ("lf dwarf dd"), or {@code null} if there is none or several. */
+	private static Race soleRaceIn(String text)
+	{
+		Race found = null;
+		for (String word : text.toLowerCase().split("[^a-z]+"))
+		{
+			final Race race = raceFromToken(word);
+			if (race != null)
+			{
+				if ((found != null) && (found != race))
+				{
+					return null; // a mixed-race call - don't guess one for everybody
+				}
+				found = race;
+			}
+		}
+		return found;
 	}
 
 	/**
@@ -1401,6 +1512,7 @@ public class FakePlayerChatManager implements IXmlReader
 				builder.header("X-Deal-Count", Integer.toString(dealContext.count));
 				builder.header("X-Deal-Unit-Price", Integer.toString(dealContext.unitPrice));
 				builder.header("X-Deal-Total-Price", Long.toString(dealContext.totalPrice));
+				builder.header("X-Deal-Needs-Count", dealContext.needsCount ? "true" : "false");
 			}
 
 			final HttpRequest request = builder //
@@ -1614,11 +1726,18 @@ public class FakePlayerChatManager implements IXmlReader
 			final Matcher shop = SHOP_TAG.matcher(reply);
 			if (shop.find())
 			{
-				final boolean botSells = "SELL".equalsIgnoreCase(shop.group(1));
-				final ItemTemplate item = FakePlayerStoreFactory.findItemByName(shop.group(2));
+				// A weak brain model routinely flips SELL/BUY, mangles the item name, and drops the "k" on the
+				// price inside this tag. Java already parsed the real terms from the original WTS/WTB ad and
+				// stashed them in the deal context, so treat that as authoritative: the SHOP tag is only the
+				// "deal agreed, open it now" signal, not the source of truth for direction/item/price. When there
+				// is no stored deal (unusual), fall back to reading the terms straight from the tag.
+				final BrainDealContext deal = ACTIVE_DEALS.get(dealKey(player.getName(), bot.getName()));
+				final boolean botSells = (deal != null) ? "SELL".equalsIgnoreCase(deal.side) : "SELL".equalsIgnoreCase(shop.group(1));
+				final ItemTemplate item = FakePlayerStoreFactory.findItemByName((deal != null) ? deal.item : shop.group(2));
 				if (item != null)
 				{
-					final int price = FakePlayerChatParsing.applyShopPriceMultiplier(Integer.parseInt(shop.group(3)), shop.group(4));
+					final int taggedPrice = FakePlayerChatParsing.applyShopPriceMultiplier(Integer.parseInt(shop.group(3)), shop.group(4));
+					final int price = (deal != null) ? FakePlayerChatParsing.resolveDealPrice(taggedPrice, deal.unitPrice) : taggedPrice;
 
 					final int storeType = botSells ? PrivateStoreType.SELL.getId() : PrivateStoreType.BUY.getId();
 					final FakePlayerBehaviorManager behavior = FakePlayerBehaviorManager.getInstance();

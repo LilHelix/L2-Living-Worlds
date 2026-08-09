@@ -27,3 +27,19 @@ game/data/html/admin/rates.htm
 game/data/scripts/handlers/chat/commands/admin/AdminRates.java
 brain/fpc_brain.py
 tools/l2admin/index.html
+game/data/PhantomPlaystyles.xml
+game/data/xsd/PhantomPlaystyles.xsd
+game/data/BotClans.xml
+game/data/xsd/BotClans.xsd
+game/data/crests
+game/data/scripts/handlers/chat/commands/admin/AdminPhantom.java
+game/data/scripts/handlers/MasterHandler.java
+game/data/scripts/handlers/skill/targets/Party.java
+game/data/skill icons
+images
+Start-Server.bat
+Stop-Server.bat
+Control-Panel.bat
+launcher/launcher.ps1
+launcher/stop.ps1
+launcher/Control-Panel.ps1

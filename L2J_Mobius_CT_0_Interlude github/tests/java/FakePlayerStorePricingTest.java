@@ -51,6 +51,8 @@ public class FakePlayerStorePricingTest
 		testNormalizedDealCount();
 		testBulkAmountRange();
 		testAmount();
+		testNaturalizePrice();
+		testPriceText();
 		testShotAbbrev();
 		testShotSign();
 		testMatchTokens();
@@ -122,6 +124,35 @@ public class FakePlayerStorePricingTest
 		eq("2.5k", FakePlayerStorePricing.amount(2500), "2500 -> 2.5k");
 		eq("800", FakePlayerStorePricing.amount(800), "under 1000 stays plain");
 		eq("999", FakePlayerStorePricing.amount(999), "999 stays plain");
+	}
+
+	private static void testNaturalizePrice()
+	{
+		// >= 1000 rounds to two significant figures (the ugly random markup becomes a number a player would say).
+		eq(45000, FakePlayerStorePricing.naturalizePrice(45320), "45320 -> 45000 (2 sig figs)");
+		eq(1200, FakePlayerStorePricing.naturalizePrice(1234), "1234 -> 1200");
+		eq(470000, FakePlayerStorePricing.naturalizePrice(467000), "467000 -> 470000 (rounds up)");
+		eq(45000000, FakePlayerStorePricing.naturalizePrice(45320000), "45320000 -> 45,000,000");
+		eq(1000, FakePlayerStorePricing.naturalizePrice(999), "999 -> 1000 (nearest 10 crosses over)");
+		// 100-999 rounds to the nearest 10; under 100 stays exact so shot prices ("3a each") survive.
+		eq(450, FakePlayerStorePricing.naturalizePrice(452), "452 -> 450 (nearest 10)");
+		eq(3, FakePlayerStorePricing.naturalizePrice(3), "3 stays exact");
+		eq(50, FakePlayerStorePricing.naturalizePrice(50), "50 stays exact");
+		// Guards: never returns below 1 for a positive/zero/negative input.
+		eq(1, FakePlayerStorePricing.naturalizePrice(0), "0 -> 1");
+		eq(1, FakePlayerStorePricing.naturalizePrice(-5), "negative -> 1");
+	}
+
+	private static void testPriceText()
+	{
+		eq("45k", FakePlayerStorePricing.priceText(45000), "45000 -> 45k");
+		eq("470k", FakePlayerStorePricing.priceText(470000), "470000 -> 470k");
+		eq("1.2k", FakePlayerStorePricing.priceText(1200), "1200 -> 1.2k");
+		eq("1k", FakePlayerStorePricing.priceText(1000), "1000 -> 1k");
+		eq("45kk", FakePlayerStorePricing.priceText(45000000), "45,000,000 -> 45kk");
+		eq("1.5kk", FakePlayerStorePricing.priceText(1500000), "1,500,000 -> 1.5kk");
+		eq("300", FakePlayerStorePricing.priceText(300), "under 1000 stays plain");
+		eq("999", FakePlayerStorePricing.priceText(999), "999 stays plain");
 	}
 
 	private static void testShotAbbrev()

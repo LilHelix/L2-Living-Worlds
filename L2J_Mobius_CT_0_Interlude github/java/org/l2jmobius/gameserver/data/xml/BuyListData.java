@@ -32,6 +32,7 @@ import org.w3c.dom.Node;
 import org.l2jmobius.commons.database.DatabaseFactory;
 import org.l2jmobius.commons.util.IXmlReader;
 import org.l2jmobius.gameserver.config.GeneralConfig;
+import org.l2jmobius.gameserver.managers.FakePlayerGearFilter;
 import org.l2jmobius.gameserver.model.buylist.BuyListHolder;
 import org.l2jmobius.gameserver.model.buylist.Product;
 import org.l2jmobius.gameserver.model.item.ItemTemplate;
@@ -98,6 +99,9 @@ public class BuyListData implements IXmlReader
 		{
 			LOGGER.log(Level.WARNING, "Failed to load buyList data from database.", e);
 		}
+		
+		// Project hook: all custom FakePlayer and Phantom gear pools derive from these buy lists.
+		FakePlayerGearFilter.onBuyListsReloaded();
 	}
 	
 	@Override

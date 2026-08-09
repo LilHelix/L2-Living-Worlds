@@ -292,15 +292,20 @@ def memory_note(player, categories=None, k=8):
             + "\n- ".join(texts[-k:]))
 
 _MEET_MEMORY_RE = re.compile(r"\[\[\s*MEET\s*:\s*([a-zA-Z]+)\s*\]\]", re.IGNORECASE)
-_SHOP_MEMORY_RE = re.compile(r"\[\[\s*SHOP\s*:\s*(SELL|BUY)\s*:\s*([^:\]]+?)\s*:\s*(\d+)\s*(?:k|kk)?\s*\]\]", re.IGNORECASE)
 
 def remember_trade_ad(player, ad_text):
-    """Extract persistent trade habits from public WTB/WTS ads."""
+    """Extract persistent trade *habits* from public WTB/WTS ads.
+
+    Only stable, generalized habits are persisted. The raw ad text is deliberately NOT stored: it carries the
+    price and quantity of one specific post, which is ephemeral per-deal state, not a lasting player trait. This
+    memory is player-global (shared by every bot), so persisting a one-time price offer here made it permanent and
+    leaked it into unrelated later deals with other phantoms. The live price of an active deal lives instead in the
+    per-(player, bot) conversation history and the Java-side deal context, where it expires with the deal.
+    """
     text = (ad_text or "").strip()
     low = text.lower()
     if not player or not text:
         return
-    remember_fact(player, "trade", f"Player recently posted trade ad: {text}")
 
     wants_to_buy = bool(re.search(r"\b(wtb|buying|b>)\b", low))
     wants_to_sell = bool(re.search(r"\b(wts|selling|s>)\b", low))
@@ -330,15 +335,10 @@ def remember_from_exchange(player, user_text, reply_text, mode):
         else:
             remember_fact(player, "trade", f"Player agreed to meet at {spot}.")
 
-    shop = _SHOP_MEMORY_RE.search(reply)
-    if shop:
-        side = shop.group(1).upper()
-        item = shop.group(2).strip()
-        price = shop.group(3).strip()
-        if side == "SELL":
-            remember_fact(player, "trade", f"Player agreed to buy {item} for {price} adena each.")
-        else:
-            remember_fact(player, "trade", f"Player agreed to sell {item} for {price} adena each.")
+    # The specific item/price of a closed deal is intentionally NOT written to this player-global memory. That price
+    # is per-deal, ephemeral state: it belongs to the active negotiation (Java deal context + this private
+    # conversation), not to the player's lasting profile. Persisting it here made an offer permanent and let other
+    # phantoms quote a stale, unrelated price on a later deal. The general "haggles" habit below is still recorded.
 
     if "gatekeeper" in user_low or " gk" in f" {user_low} ":
         remember_fact(player, "trade", "Player often uses gatekeeper as a meeting point.")
@@ -487,6 +487,9 @@ def whisper_persona(fpc, voice):
             "[[SHOP:SELL:<item>:<price>]] if YOU sell that item to them, or "
             "[[SHOP:BUY:<item>:<price>]] if YOU buy it from them.\n"
             "- <item> must be the plain item name, e.g. Soulshot D-grade. <price> must be a plain number.\n"
+            "- When you close a deal (any line that carries a MEET or SHOP tag), keep the spoken part short and "
+            "on-topic about the trade or meeting. Do NOT bring up unrelated stuff (your day, catacombs, drops, "
+            "epics, side stories) on the closing line.\n"
             "- Shop tags and meet tags are commands only. Never mention, explain, quote, or read out tags.")
 
 def trade_persona(fpc, voice):
@@ -648,12 +651,28 @@ def identity_note():
                   "'rats in giran': " + spot)
     return block
 
+def fmt_amount(value):
+    """Render an adena amount or stack count the way an Interlude player types it: 45000 -> '45k',
+    470000 -> '470k', 1200 -> '1.2k', 45000000 -> '45kk', 300 -> '300'. Non-numeric input is returned as-is."""
+    try:
+        n = int(str(value).strip())
+    except (TypeError, ValueError):
+        return str(value)
+    if n >= 1_000_000:
+        v = n / 1_000_000
+        return (str(int(v)) if v == int(v) else f"{v:.1f}") + "kk"
+    if n >= 1000:
+        v = n / 1000
+        return (str(int(v)) if v == int(v) else f"{v:.1f}") + "k"
+    return str(n)
+
 def deal_note_from_headers():
     side = request.headers.get("X-Deal-Side", "").strip().upper()
     item = request.headers.get("X-Deal-Item", "").strip()
     count = request.headers.get("X-Deal-Count", "").strip()
     unit = request.headers.get("X-Deal-Unit-Price", "").strip()
     total = request.headers.get("X-Deal-Total-Price", "").strip()
+    needs_count = request.headers.get("X-Deal-Needs-Count", "false").strip().lower() == "true"
 
     if not side or not item or not unit:
         return ""
@@ -668,17 +687,24 @@ def deal_note_from_headers():
         action = "You are negotiating a trade with the player."
         shop_tag = ""
 
-    qty = f"{count}x " if count else ""
-    total_line = f" Total price is about {total} adena." if total else ""
-
-    return (
-        "\n\nStructured current trade context. Prefer this over guessing from chat text:\n"
-        f"- {action}\n"
-        f"- Item: {qty}{item}\n"
-        f"- Unit price: {unit} adena each.\n"
-        f"-{total_line}\n"
-        f"- If the player agrees price and meeting place, use this exact shop tag: {shop_tag}"
-    )
+    lines = [
+        "\n\nStructured current trade context. Prefer this over guessing from chat text:",
+        f"- {action}",
+    ]
+    if needs_count:
+        lines.append(f"- Item: {item} - the player has NOT said how many they want yet; ask them how many before agreeing.")
+    else:
+        qty = f"{fmt_amount(count)}x " if count else ""
+        lines.append(f"- Item: {qty}{item}")
+    lines.append(f"- Unit price: {fmt_amount(unit)} adena each.")
+    if total and not needs_count:
+        lines.append(f"- Total price is about {fmt_amount(total)} adena.")
+    lines.append("- Always say prices and amounts in short form like 45k or 1.2kk, never the full number like 45000.")
+    if needs_count:
+        lines.append("- Do NOT add a MEET or SHOP tag until the player tells you how many they want.")
+    else:
+        lines.append(f"- If the player agrees price and meeting place, use this exact shop tag: {shop_tag}")
+    return "\n".join(lines)
 
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -730,7 +756,8 @@ def chat():
             prompt = (f'{player} just posted in trade chat: "{message}". '
                       f"You want to {deal}. Send them ONE short, casual whisper that opens the deal by "
                       "stating your price and asking if they want to trade and where they want to meet. "
-                      "Use the structured trade context exactly for item, quantity and price. "
+                      "Use the structured trade context for the item and price; if it says the amount is not "
+                      "agreed yet, ask how many they want. Say prices in short form like 45k, never 45000. "
                       "Use memory naturally if relevant, but do not act like a stalker. "
                       "Do NOT pick or agree a meeting place yourself yet, and do NOT add any tag.")
             reply = sanitize(call_llm(system, [{"role": "user", "content": prompt}], 70, temperature))

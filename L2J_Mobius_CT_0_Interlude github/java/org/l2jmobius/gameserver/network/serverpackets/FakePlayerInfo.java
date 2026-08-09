@@ -96,7 +96,11 @@ public class FakePlayerInfo extends ServerPacket
 		_collisionRadius = collisionRadius;
 		_collisionHeight = collisionHeight;
 		_fpcHolder = npc.getTemplate().getFakePlayerInfo();
-		_clan = _look != null ? null : ClanTable.getInstance().getClan(_fpcHolder.getClanId());
+		// A generated fake player (with a look) carries its own bot-clan id when it belongs to one; a static
+		// template fake player uses the template's clan id. Either way the clan block below renders its crest.
+		_clan = (_look != null) //
+			? ((_look.getClanId() != 0) ? ClanTable.getInstance().getClan(_look.getClanId()) : null) //
+			: ClanTable.getInstance().getClan(_fpcHolder.getClanId());
 	}
 	
 	@Override

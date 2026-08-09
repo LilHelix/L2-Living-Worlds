@@ -34,12 +34,14 @@ PROD_SOURCES=(
 	"java/org/l2jmobius/commons/util/Rnd.java"
 	"java/org/l2jmobius/gameserver/managers/FakePlayerChatParsing.java"
 	"java/org/l2jmobius/gameserver/managers/FakePlayerStorePricing.java"
+	"java/org/l2jmobius/gameserver/managers/FakePlayerStoreEligibility.java"
 	"java/org/l2jmobius/gameserver/managers/FakePlayerNameFactory.java"
 	"java/org/l2jmobius/gameserver/managers/PhantomBuffReservations.java"
 )
 JAVA_MAIN_CLASSES=(
 	"FakePlayerChatParsingTest"
 	"FakePlayerStorePricingTest"
+	"FakePlayerStoreEligibilityTest"
 	"FakePlayerNameFactoryTest"
 	"PhantomBuffReservationsTest"
 )
@@ -88,6 +90,29 @@ else
 		for main in "${JAVA_MAIN_CLASSES[@]}"; do
 			record "java ${main} (compile failed)" 1
 		done
+	fi
+fi
+
+# ---- JavaScript: the l2admin playstyle editor -----------------------------
+# The panel is a single dependency-free HTML file, so the harness reads index.html and evaluates its
+# script in a stub - it always tests the shipping code. Node is optional here: skip if it's missing.
+echo
+echo ">>> JavaScript: playstyle editor (tools/l2admin)"
+if ! command -v node >/dev/null 2>&1; then
+	echo "    node not found on PATH - skipping (optional suite)."
+	summary+=("SKIP  js playstyle editor (no node)")
+else
+	if node tests/js/playstyle_editor_test.js; then
+		record "js playstyle editor" 0
+	else
+		record "js playstyle editor" 1
+	fi
+	echo
+	echo ">>> JavaScript: bot clans editor (tools/l2admin)"
+	if node tests/js/botclans_editor_test.js; then
+		record "js bot clans editor" 0
+	else
+		record "js bot clans editor" 1
 	fi
 fi
 

@@ -194,6 +194,7 @@ public class FakePlayerAppearanceFactory
 	// grade -> candidate shield display ids (for tanks / swordsingers).
 	private static final EnumMap<CrystalType, List<Integer>> SHIELDS = new EnumMap<>(CrystalType.class);
 	private static volatile boolean _poolsBuilt = false;
+	private static volatile int _poolsVersion = -1;
 
 	// Races eligible for generated bots, weighted by repetition (humans most common, dwarves least).
 	private static final Race[] RACE_POOL =
@@ -525,10 +526,15 @@ public class FakePlayerAppearanceFactory
 	/** Resolves the display-gear pools from the item table once (armor by family/grade/slot, weapons by grade). */
 	private static synchronized void buildPools()
 	{
-		if (_poolsBuilt)
+		final int version = FakePlayerGearFilter.getVersion();
+		if (_poolsBuilt && (_poolsVersion == version))
 		{
 			return;
 		}
+		ARMOR_POOLS.clear();
+		EXTREMITY_POOLS.clear();
+		WEAPON_POOLS.clear();
+		SHIELDS.clear();
 		for (ArmorType family : new ArmorType[]
 		{
 			ArmorType.LIGHT,
@@ -572,9 +578,9 @@ public class FakePlayerAppearanceFactory
 		}
 		for (ItemTemplate item : ItemData.getInstance().getAllItems())
 		{
-			if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0) || !FakePlayerGearFilter.isPlayerGear(item))
+			if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0) || item.isForNpc() || !FakePlayerGearFilter.isPlayerGear(item))
 			{
-				continue; // skip pet/summon/monster gear that renders as a sack / invisible slot
+				continue; // skip pet/summon/monster gear (for_npc) that renders as a sack / invisible slot
 			}
 			final CrystalType grade = item.getCrystalType();
 			final int id = item.getId();
@@ -650,6 +656,7 @@ public class FakePlayerAppearanceFactory
 				}
 			}
 		}
+		_poolsVersion = version;
 		_poolsBuilt = true;
 	}
 

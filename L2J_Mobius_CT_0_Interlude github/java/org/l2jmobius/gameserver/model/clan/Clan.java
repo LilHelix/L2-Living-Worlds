@@ -377,6 +377,40 @@ public class Clan
 	}
 	
 	/**
+	 * Project hook (bot clans): registers a runtime-only clan member with no database write, no pledge packets, and
+	 * no join event. Used by {@code BotClanManager} to attach a clientless phantom (or a data-only leader) to a
+	 * synthetic bot clan. The caller sets {@code player.setClan(...)} afterwards; membership here satisfies the
+	 * {@code isMember} check that {@code setClan} requires. Removed again with {@link #removeBotMember(int)} when the
+	 * phantom despawns, so the roster never keeps a stale object id.
+	 * @param member the runtime-only member to register
+	 */
+	public void addBotMember(ClanMember member)
+	{
+		_members.put(member.getObjectId(), member);
+	}
+
+	/**
+	 * Project hook (bot clans): drops a runtime-only member registered with {@link #addBotMember(ClanMember)}. No
+	 * database write and no subpledge bookkeeping - a bot clan's membership is purely in-memory.
+	 * @param objectId the object id of the member to drop
+	 */
+	public void removeBotMember(int objectId)
+	{
+		_members.remove(objectId);
+	}
+
+	/**
+	 * Project hook (bot clans): sets the clan level in memory only (unlike {@link #changeLevel(int)}, which writes to
+	 * {@code clan_data}). A synthetic bot clan has no {@code clan_data} row, so its level is set from the bot-clan
+	 * definition each boot.
+	 * @param level the clan level to display
+	 */
+	public void setBotLevel(int level)
+	{
+		setLevel(level);
+	}
+
+	/**
 	 * Updates player status in clan.
 	 * @param player the player to be updated.
 	 */

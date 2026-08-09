@@ -11,7 +11,13 @@
 
   Driven by Start-Server.bat in the parent (dist) folder. Nothing here touches game logic -
   it only orchestrates the pieces that already exist.
+
+  -Quiet is used by the GUI control panel: it hides the console windows (the DB
+  engine and each server run without a terminal). The plain Start-Server.bat path
+  does not pass it, so its behavior is unchanged.
 #>
+
+param([switch]$Quiet)
 
 $ErrorActionPreference = 'Stop'
 
@@ -20,6 +26,7 @@ $LauncherDir = Split-Path -Parent $MyInvocation.MyCommand.Path      # dist\launc
 $DistDir     = Split-Path -Parent $LauncherDir                       # dist
 $IniPath     = Join-Path $LauncherDir 'launcher.ini'
 $MarkerPath  = Join-Path $LauncherDir '.db_installed'
+$ProcessRegistryPath = Join-Path $LauncherDir '.processes.json'
 
 function Write-Head($t) { Write-Host ""; Write-Host "==== $t ====" -ForegroundColor Cyan }
 function Write-Ok($t)   { Write-Host "  [ OK ] $t" -ForegroundColor Green }
@@ -48,6 +55,56 @@ function Get-Ini($ini, $sec, $key, $default = '') {
     return $default
 }
 function Is-True($v) { return @('true','1','yes','on') -contains ("$v").ToLower() }
+
+# ---- launcher-owned process registry --------------------------------------
+# Stop-Server uses this registry to terminate only processes created by this
+# launcher. PID alone is not sufficient because Windows can reuse it, so each
+# record also carries the process start time, image name, and command marker.
+$script:LaunchedProcesses = @()
+
+function Save-ProcessRegistry {
+    $tmp = "$ProcessRegistryPath.tmp"
+    ConvertTo-Json -InputObject @($script:LaunchedProcesses) -Depth 3 |
+        Set-Content -Path $tmp -Encoding UTF8
+    Move-Item -Path $tmp -Destination $ProcessRegistryPath -Force
+}
+
+function Register-LaunchedProcess($role, $process, $marker) {
+    Start-Sleep -Milliseconds 100
+    $process.Refresh()
+    if ($process.HasExited) { Fail "$role exited immediately after launch." }
+    $script:LaunchedProcesses += [pscustomobject]@{
+        Role        = $role
+        Id          = $process.Id
+        StartTicks  = "$($process.StartTime.ToUniversalTime().Ticks)"
+        ProcessName = $process.ProcessName
+        Marker      = $marker
+    }
+    Save-ProcessRegistry
+}
+
+function Assert-NoManagedProcesses {
+    if (-not (Test-Path $ProcessRegistryPath)) { return }
+    try {
+        # Assign first, then wrap with @() when iterating. In Windows PowerShell 5.1
+        # ConvertFrom-Json returns a multi-record array as a single non-enumerated
+        # object, so @(pipeline) would nest it and $record would bind to the inner array.
+        $records = Get-Content -Raw $ProcessRegistryPath | ConvertFrom-Json
+    } catch {
+        Fail "Process registry is unreadable: $ProcessRegistryPath. Inspect or remove it before starting."
+    }
+    foreach ($record in @($records)) {
+        $existing = Get-Process -Id ([int]$record.Id) -ErrorAction SilentlyContinue
+        if ($existing) {
+            try { $ticks = "$($existing.StartTime.ToUniversalTime().Ticks)" } catch { $ticks = '' }
+            if (($ticks -eq "$($record.StartTicks)") -and
+                ($existing.ProcessName -eq "$($record.ProcessName)")) {
+                Fail "$($record.Role) is already running (PID $($record.Id)). Use Stop-Server.bat first."
+            }
+        }
+    }
+    Remove-Item $ProcessRegistryPath -Force
+}
 
 # ---- helpers ---------------------------------------------------------------
 function Test-Port($p) {
@@ -109,6 +166,8 @@ $startLogin= Is-True (Get-Ini $ini 'servers'  'StartLogin' 'true')
 $startGame = Is-True (Get-Ini $ini 'servers'  'StartGame'  'true')
 $startBrain= Is-True (Get-Ini $ini 'servers'  'StartBrain' 'false')
 
+Assert-NoManagedProcesses
+
 # Resolve relative MysqlBin / DataDir against dist\ so the bundled pack is portable.
 function Resolve-Rel($p) {
     if ($p -eq '') { return '' }
@@ -160,6 +219,19 @@ $java = Find-Java $javaHome
 if (-not $java) { Fail "Could not find Java. Use the bundled pack, set JavaHome in launcher.ini, or install JDK 25." }
 Write-Ok "java: $java"
 
+# Quiet mode (GUI control panel): hide the console/terminal windows. The DB engine
+# has no GUI, so it runs fully hidden. The Java servers launch via javaw.exe so their
+# terminal window is gone while the in-process Swing GUI window still opens - EnableGUI
+# stays on, no headless flag. stop.ps1 still matches them: it records whatever process
+# name we launch (javaw) and verifies the jar on the command line.
+$dbWindowStyle   = if ($Quiet) { 'Hidden' } else { 'Minimized' }
+$serverLaunchExe = $java
+if ($Quiet) {
+    $javawCandidate = Join-Path (Split-Path -Parent $java) 'javaw.exe'
+    if (Test-Path $javawCandidate) { $serverLaunchExe = $javawCandidate }
+    else { Write-Info "javaw.exe not found next to java.exe; server terminals will stay visible." }
+}
+
 # ---- 2. Database engine ----------------------------------------------------
 Write-Head "2/4  Database (MySQL/MariaDB)"
 
@@ -202,11 +274,11 @@ if (Test-Port $dbPort) {
         # (e.g. "New folder") gets split and mysqld fails to start. Quoting fixes that.
         $mysqldArgLine = "--datadir=`"$dataDir`" --port=$dbPort --skip-name-resolve --console"
         Start-Process -FilePath $mysqldExe -WorkingDirectory $mysqlBin `
-            -ArgumentList $mysqldArgLine -WindowStyle Minimized | Out-Null
+            -ArgumentList $mysqldArgLine -WindowStyle $dbWindowStyle | Out-Null
     } else {
         # External engine (XAMPP etc.): start it with its own configured data dir.
         Write-Info "starting mysqld from $mysqlBin ..."
-        Start-Process -FilePath $mysqldExe -WorkingDirectory $mysqlBin -WindowStyle Minimized | Out-Null
+        Start-Process -FilePath $mysqldExe -WorkingDirectory $mysqlBin -WindowStyle $dbWindowStyle | Out-Null
     }
 
     if (Wait-Port $dbPort 60) { Write-Ok "database is up on port $dbPort" }
@@ -280,8 +352,9 @@ function Start-JavaServer($name, $workDir, $jarRelative) {
     if (Test-Path $cfgPath) { $params = (Get-Content -Raw $cfgPath).Trim() }
     $argLine = "$params -jar `"$jarRelative`""
     Write-Info "launching $name ..."
-    Start-Process -FilePath $java -ArgumentList $argLine -WorkingDirectory $workDir | Out-Null
-    Write-Ok "$name started"
+    $serverProcess = Start-Process -FilePath $serverLaunchExe -ArgumentList $argLine -WorkingDirectory $workDir -PassThru
+    Register-LaunchedProcess $name $serverProcess ([System.IO.Path]::GetFileName($jarPath))
+    Write-Ok "$name started (PID $($serverProcess.Id))"
 }
 
 if ($startLogin) {
@@ -293,13 +366,21 @@ if ($startGame) {
 }
 
 if ($startBrain) {
-    $brainBat = Join-Path (Split-Path -Parent $DistDir) 'setup_brain.bat'
+    # The bundled pack ships the brain under dist\brain\ (setup_brain.bat lives
+    # alongside fpc_brain.py + knowledge\). A raw source checkout instead keeps
+    # setup_brain.bat at the project root, one level above dist\. Look in the
+    # pack location first, then fall back to the source layout.
+    $brainBat = Join-Path $DistDir 'brain\setup_brain.bat'
+    if (-not (Test-Path $brainBat)) {
+        $brainBat = Join-Path (Split-Path -Parent $DistDir) 'setup_brain.bat'
+    }
     if (Test-Path $brainBat) {
         Write-Info "launching FPC brain ..."
-        Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `"$brainBat`"" | Out-Null
-        Write-Ok "brain started"
+        $brainProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `"$brainBat`"" -PassThru
+        Register-LaunchedProcess 'FPC Brain' $brainProcess ([System.IO.Path]::GetFileName($brainBat))
+        Write-Ok "brain started (PID $($brainProcess.Id))"
     } else {
-        Write-Info "StartBrain=true but setup_brain.bat not found next to dist\ - skipping"
+        Write-Info "StartBrain=true but setup_brain.bat not found in brain\ or next to dist\ - skipping"
     }
 }
 

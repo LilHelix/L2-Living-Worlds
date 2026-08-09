@@ -107,6 +107,40 @@ public class ClanMember
 	}
 	
 	/**
+	 * Project hook (bot clans): builds a roster-only member with no live {@link Player} and no database row, the
+	 * same shape a normal offline member has (name, level, class, id, sex, race). Used by {@code BotClanManager} to
+	 * give a synthetic bot clan a stable data-only leader so the clan window has a leader to show even when no
+	 * phantom of that clan is currently spawned. Not persisted; never written back to the database.
+	 * @param clan the owning clan
+	 * @param name the member display name
+	 * @param level the member level
+	 * @param classId the member class id
+	 * @param objectId a unique object id reserved for this data-only member (never a live world object)
+	 * @param female {@code true} for a female appearance
+	 * @param raceOrdinal the {@code Race} ordinal for the roster row
+	 */
+	public ClanMember(Clan clan, String name, int level, int classId, int objectId, boolean female, int raceOrdinal)
+	{
+		if (clan == null)
+		{
+			throw new IllegalArgumentException("Cannot create a Clan Member with a null clan.");
+		}
+
+		_clan = clan;
+		_name = name;
+		_level = level;
+		_classId = classId;
+		_objectId = objectId;
+		_title = "";
+		_powerGrade = 0;
+		_pledgeType = 0;
+		_apprentice = 0;
+		_sponsor = 0;
+		_sex = female;
+		_raceOrdinal = raceOrdinal;
+	}
+
+	/**
 	 * Sets the player instance.
 	 * @param player the new player instance
 	 */

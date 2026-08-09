@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - "L2J_Mobius_CT_0_Interlude github/fpc_brain.py"
-      - "L2J_Mobius_CT_0_Interlude github/tests/**"
+      - "L2J_Mobius_CT_0_Interlude github/tests/test_*.py"
       - "L2J_Mobius_CT_0_Interlude github/requirements.txt"
       - ".github/workflows/python-brain-tests.yml"
   push:
@@ -12,7 +12,7 @@ on:
       - main
     paths:
       - "L2J_Mobius_CT_0_Interlude github/fpc_brain.py"
-      - "L2J_Mobius_CT_0_Interlude github/tests/**"
+      - "L2J_Mobius_CT_0_Interlude github/tests/test_*.py"
       - "L2J_Mobius_CT_0_Interlude github/requirements.txt"
       - ".github/workflows/python-brain-tests.yml"
 
