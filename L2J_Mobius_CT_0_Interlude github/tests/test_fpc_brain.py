@@ -106,6 +106,29 @@ class FpcBrainRegressionTests(unittest.TestCase):
         self.assertIn("Player often uses gatekeeper as a meeting point.", trade_texts)
         self.assertIn("Player has been friendly/appreciative.", social_texts)
 
+    def test_trade_ad_does_not_persist_raw_ad_or_price(self):
+        # The raw ad (with its one-time price/quantity) must not become permanent player-global memory.
+        self.brain.remember_trade_ad("PlayerOne", "+WTB ssd 300 adena")
+        texts = [fact["text"] for fact in self.brain._memory["playerone"]["trade"]]
+        self.assertNotIn("Player recently posted trade ad: +WTB ssd 300 adena", texts)
+        self.assertFalse(any("300" in text for text in texts), texts)
+        # The generalized habit is still recorded.
+        self.assertIn("Player has looked for D-grade shots in bulk.", texts)
+
+    def test_exchange_does_not_persist_specific_deal_price(self):
+        # A closed deal's item/price is per-deal state, not a lasting profile fact shared with every other phantom.
+        self.brain.remember_from_exchange(
+            "PlayerOne",
+            "ok deal, gk",
+            "cool see you there [[SHOP:SELL:Soulshot D-grade:5]]\n[[MEET:gatekeeper]]",
+            "WHISPER",
+        )
+        texts = [fact["text"] for fact in self.brain._memory["playerone"]["trade"]]
+        self.assertFalse(any("adena each" in text for text in texts), texts)
+        self.assertFalse(any("Soulshot D-grade" in text for text in texts), texts)
+        # Stable meet habit is still recorded from the same exchange.
+        self.assertIn("Player agreed to meet at gatekeeper.", texts)
+
     def test_player_key_normalizes_case_and_whitespace(self):
         self.assertEqual("playerone", self.brain._player_key("  PlayerOne  "))
         self.assertEqual("", self.brain._player_key(None))
@@ -131,6 +154,43 @@ class FpcBrainRegressionTests(unittest.TestCase):
         party_texts = [fact["text"] for fact in entry["party"]]
         self.assertIn("Player sometimes haggles trade prices.", trade_texts)
         self.assertIn("Player sometimes goes AFK during party play.", party_texts)
+
+    def test_fmt_amount_shorthand(self):
+        self.assertEqual("45k", self.brain.fmt_amount(45000))
+        self.assertEqual("470k", self.brain.fmt_amount(470000))
+        self.assertEqual("1.2k", self.brain.fmt_amount(1200))
+        self.assertEqual("1k", self.brain.fmt_amount(1000))
+        self.assertEqual("45kk", self.brain.fmt_amount(45000000))
+        self.assertEqual("1.5kk", self.brain.fmt_amount(1500000))
+        self.assertEqual("300", self.brain.fmt_amount(300))
+        self.assertEqual("45k", self.brain.fmt_amount("45000"))
+        self.assertEqual("junk", self.brain.fmt_amount("junk"))
+
+    def test_deal_note_speaks_shorthand_prices(self):
+        with self.brain.app.test_request_context(headers={
+            "X-Deal-Side": "SELL",
+            "X-Deal-Item": "Soulshot D-grade",
+            "X-Deal-Count": "5000",
+            "X-Deal-Unit-Price": "45000",
+            "X-Deal-Total-Price": "225000000",
+        }):
+            note = self.brain.deal_note_from_headers()
+        self.assertIn("45k adena each", note)
+        self.assertNotIn("45000 adena each", note)
+        self.assertIn("5kx", note)  # count also spoken in shorthand
+        # The machine-parsed shop tag keeps the plain number.
+        self.assertIn("[[SHOP:SELL:Soulshot D-grade:45000]]", note)
+
+    def test_deal_note_asks_for_amount_when_needed(self):
+        with self.brain.app.test_request_context(headers={
+            "X-Deal-Side": "SELL",
+            "X-Deal-Item": "Soulshot D-grade",
+            "X-Deal-Unit-Price": "45000",
+            "X-Deal-Needs-Count": "true",
+        }):
+            note = self.brain.deal_note_from_headers()
+        self.assertIn("how many", note.lower())
+        self.assertNotIn("[[SHOP:", note)
 
     def test_memory_note_empty_when_no_facts(self):
         self.assertEqual("", self.brain.memory_note("Nobody"))

@@ -39,7 +39,8 @@ import org.l2jmobius.gameserver.model.actor.Player;
  * {@code <friend>} orders): everything despawns, zones redeploy on approach, friends rejoin in ~15s.</li>
  * <li>{@code //phantom clear} - despawn all phantoms.</li>
  * <li>{@code //phantom count} - report how many are active.</li>
- * <li>{@code //phantom debug [on|off]} - toggle the raid combat trace (logs to the gameserver console).</li>
+ * <li>{@code //phantom debug [on|off]} - toggle the phantom combat trace (logs to the gameserver console).</li>
+ * <li>{@code //debug_on} / {@code //debug_off} - shortcuts for the same combat trace, usable on their own.</li>
  * <li>{@code //phantom playstyle} - re-read PhantomPlaystyles.xml live (per-class combat playstyles);
  * recruited members pick the new data up on their next combat tick.</li>
  * <li>{@code //phantom playstyle check} - report problems found in the file (unknown condition, bad
@@ -50,13 +51,24 @@ public class AdminPhantom implements IAdminCommandHandler
 {
 	private static final String[] ADMIN_COMMANDS =
 	{
-		"admin_phantom"
+		"admin_phantom",
+		"admin_debug_on",
+		"admin_debug_off"
 	};
 
 	@Override
 	public boolean onCommand(String command, Player activeChar)
 	{
 		final String[] words = command.split(" ");
+		// Standalone shortcuts //debug_on and //debug_off flip the same PhantomPartyManager.DEBUG flag as
+		// "//phantom debug on|off", so a tester can turn the combat trace on or off without the "phantom" prefix.
+		final String base = words[0].toLowerCase();
+		if (base.equals("admin_debug_on") || base.equals("admin_debug_off"))
+		{
+			PhantomPartyManager.DEBUG = base.equals("admin_debug_on");
+			activeChar.sendSysMessage("Phantom combat debug trace: " + (PhantomPartyManager.DEBUG ? "ON" : "OFF") + " (logs to the gameserver console).");
+			return true;
+		}
 		if (words.length < 2)
 		{
 			activeChar.sendSysMessage("Usage: //phantom spawn [count] [level] | reload | clear | count | debug [on|off] | playstyle [check]");

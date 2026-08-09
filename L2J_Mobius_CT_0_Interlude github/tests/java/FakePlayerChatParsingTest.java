@@ -47,6 +47,8 @@ public class FakePlayerChatParsingTest
 	public static void main(String[] args)
 	{
 		testTradeQuantity();
+		testTradeUnitPrice();
+		testSpokenQuantity();
 		testShopPriceMultiplier();
 		testResolveDealPrice();
 		testLfpLevel();
@@ -82,6 +84,50 @@ public class FakePlayerChatParsingTest
 		eq(0, FakePlayerChatParsing.parseTradeQuantity("5k", false), "non-stackable -> 0");
 		eq(0, FakePlayerChatParsing.parseTradeQuantity(null, true), "null phrase -> 0");
 		eq(0, FakePlayerChatParsing.parseTradeQuantity("no digits here", true), "no number -> 0");
+	}
+
+	private static void testTradeUnitPrice()
+	{
+		// A number carrying a price cue is read as the unit price (with k/kk/m applied).
+		eq(300, FakePlayerChatParsing.parseTradeUnitPrice("ssd 300 adena"), "300 adena -> 300");
+		eq(300, FakePlayerChatParsing.parseTradeUnitPrice("ssd 300a"), "300a -> 300");
+		eq(5000, FakePlayerChatParsing.parseTradeUnitPrice("ss 5k ea"), "5k ea -> 5000");
+		eq(5000, FakePlayerChatParsing.parseTradeUnitPrice("ss 5k each"), "5k each -> 5000");
+		eq(1200, FakePlayerChatParsing.parseTradeUnitPrice("ssd 1200 pc"), "1200 pc -> 1200");
+		eq(250, FakePlayerChatParsing.parseTradeUnitPrice("ssd 250 per"), "250 per -> 250");
+		eq(1000000, FakePlayerChatParsing.parseTradeUnitPrice("mats 1kk adena"), "1kk adena -> 1,000,000");
+		eq(300, FakePlayerChatParsing.parseTradeUnitPrice("ssd @300"), "@300 -> 300");
+		eq(5000, FakePlayerChatParsing.parseTradeUnitPrice("ssd @5k"), "@5k -> 5000");
+		// A bare number is a quantity, not a price - never mistaken for one.
+		eq(0, FakePlayerChatParsing.parseTradeUnitPrice("5k ssd"), "bare quantity -> no price");
+		eq(0, FakePlayerChatParsing.parseTradeUnitPrice("1000 arrows"), "quantity + noun -> no price");
+		// Quantity then a priced number: the priced one wins ("1000 ssd 5 adena each" -> 5).
+		eq(5, FakePlayerChatParsing.parseTradeUnitPrice("1000 ssd 5 adena"), "quantity then priced -> 5");
+		// Guards.
+		eq(0, FakePlayerChatParsing.parseTradeUnitPrice(null), "null phrase -> 0");
+		eq(0, FakePlayerChatParsing.parseTradeUnitPrice("just chatting"), "no number -> 0");
+	}
+
+	private static void testSpokenQuantity()
+	{
+		// Spelled-out or digit count + magnitude word.
+		eq(2000, FakePlayerChatParsing.parseSpokenQuantity("a couple thousand"), "a couple thousand -> 2000");
+		eq(3000, FakePlayerChatParsing.parseSpokenQuantity("few k"), "few k -> 3000");
+		eq(300, FakePlayerChatParsing.parseSpokenQuantity("a few hundred"), "a few hundred -> 300");
+		eq(2000, FakePlayerChatParsing.parseSpokenQuantity("2 thousand"), "2 thousand -> 2000");
+		eq(1000, FakePlayerChatParsing.parseSpokenQuantity("a thousand"), "a thousand -> 1000");
+		eq(1000000, FakePlayerChatParsing.parseSpokenQuantity("a million"), "a million -> 1,000,000");
+		eq(2000000, FakePlayerChatParsing.parseSpokenQuantity("3 million"), "3 million capped to 2,000,000");
+		// Plain digits (with suffix) fall through to the quantity parser.
+		eq(5000, FakePlayerChatParsing.parseSpokenQuantity("gimme 5k"), "gimme 5k -> 5000");
+		eq(500, FakePlayerChatParsing.parseSpokenQuantity("500 please"), "500 -> 500");
+		// Vague bulk with no number -> use the default stack.
+		eq(FakePlayerChatParsing.SPOKEN_QUANTITY_DEFAULT, FakePlayerChatParsing.parseSpokenQuantity("just give me a stack"), "a stack -> default");
+		eq(FakePlayerChatParsing.SPOKEN_QUANTITY_DEFAULT, FakePlayerChatParsing.parseSpokenQuantity("some please"), "some -> default");
+		eq(FakePlayerChatParsing.SPOKEN_QUANTITY_DEFAULT, FakePlayerChatParsing.parseSpokenQuantity("whatever you got"), "whatever -> default");
+		// No amount at all.
+		eq(0, FakePlayerChatParsing.parseSpokenQuantity("sounds good, gk"), "no amount -> 0");
+		eq(0, FakePlayerChatParsing.parseSpokenQuantity(null), "null -> 0");
 	}
 
 	private static void testShopPriceMultiplier()

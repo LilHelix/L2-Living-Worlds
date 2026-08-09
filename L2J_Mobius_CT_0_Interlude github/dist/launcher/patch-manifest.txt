@@ -33,6 +33,7 @@ game/data/BotClans.xml
 game/data/xsd/BotClans.xsd
 game/data/crests
 game/data/scripts/handlers/chat/commands/admin/AdminPhantom.java
+game/data/scripts/handlers/MasterHandler.java
 game/data/scripts/handlers/skill/targets/Party.java
 game/data/skill icons
 images

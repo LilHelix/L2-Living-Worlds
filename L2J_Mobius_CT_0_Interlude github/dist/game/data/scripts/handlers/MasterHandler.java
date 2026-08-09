@@ -162,6 +162,7 @@ import handlers.chat.commands.admin.AdminPForge;
 import handlers.chat.commands.admin.AdminPathNode;
 import handlers.chat.commands.admin.AdminPcCafePoints;
 import handlers.chat.commands.admin.AdminPetition;
+import handlers.chat.commands.admin.AdminPhantom;
 import handlers.chat.commands.admin.AdminPledge;
 import handlers.chat.commands.admin.AdminPremium;
 import handlers.chat.commands.admin.AdminPunishment;
@@ -379,6 +380,7 @@ public class MasterHandler
 			AdminPcCafePoints.class,
 			AdminPetition.class,
 			AdminPForge.class,
+			AdminPhantom.class,
 			AdminPledge.class,
 			AdminPremium.class,
 			AdminPunishment.class,

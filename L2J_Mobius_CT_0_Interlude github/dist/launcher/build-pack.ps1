@@ -268,9 +268,9 @@ if (Test-Path $manifestPath) {
         if (-not (Test-Path $src)) { $missing += $rel; continue }
         $dst = Join-Path $patchRoot $rel
         if (Test-Path $src -PathType Container) {
-            # A manifest entry can be a whole folder (e.g. images, game\data\crests,
-            # game\data\skill icons). Copy-Item without -Recurse would create an EMPTY
-            # folder and silently drop every file inside it, so recurse the whole tree.
+            # A directory entry (game\data\crests, game\data\skill icons, images): copy the WHOLE tree, every
+            # subfolder and file. Copy-Item without -Recurse would create an empty folder here and silently drop
+            # the crest sets and icon subfolders, so use the robocopy-based Copy-Tree that mirrors the full tree.
             Copy-Tree $src $dst
         } else {
             New-Item -ItemType Directory -Path (Split-Path -Parent $dst) -Force | Out-Null

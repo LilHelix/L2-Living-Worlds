@@ -43,8 +43,21 @@ public final class FakePlayerChatParsing
 	public static final Pattern SHOP_TAG = Pattern.compile("\\[\\[\\s*SHOP\\s*:\\s*(SELL|BUY)\\s*:\\s*([^:\\]]+?)\\s*:\\s*(\\d+)\\s*(kk|k)?\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
 	public static final Pattern TRADE_AD = Pattern.compile("(wts|selling|s>|wtb|buying|b>)\\s*(.*)", Pattern.CASE_INSENSITIVE);
 	public static final Pattern TRADE_QUANTITY = Pattern.compile("\\b(\\d{1,9})(k|kk|m)?\\b", Pattern.CASE_INSENSITIVE);
+	// A unit price the player explicitly marked in a trade ad. Only a number carrying a price cue counts, so a bare
+	// number stays a quantity (see parseTradeQuantity): either "@<n>" ("ssd @300") or "<n><suffix?> <cue>" where the
+	// cue is an adena/per-unit marker (adena, ad, a, ea, each, pc, per). "adena"/"ad" are listed before "a" so the
+	// longer word wins the alternation. Group 1/2 = the "@" form digits/suffix; group 3/4 = the cue form digits/suffix.
+	public static final Pattern TRADE_UNIT_PRICE = Pattern.compile("(?:@\\s*(\\d{1,9})(kk|k|m)?)|(?:\\b(\\d{1,9})(kk|k|m)?\\s*(?:adena|ad|ea|each|pc|per|a)\\b)", Pattern.CASE_INSENSITIVE);
 	public static final Pattern LFP_TRIGGER = Pattern.compile("\\b(lfm|lfp|lfg|lf|looking for|need|recruit|wanna pt|party up|join.*pt|more for|ppl for|pst)\\b", Pattern.CASE_INSENSITIVE);
 	public static final Pattern LFP_LEVEL = Pattern.compile("(?:level|lvl|lv)\\s*\\.?\\s*(\\d{1,2})", Pattern.CASE_INSENSITIVE);
+	// Spoken amounts a player gives when a bot asks "how many?": a word or digit count followed by a magnitude word
+	// ("a couple thousand", "few hundred", "2 thousand", "a million"). Digits with a k/kk/m suffix are handled by
+	// TRADE_QUANTITY instead; this only covers the spelled-out magnitude words that regex misses.
+	public static final Pattern MAGNITUDE_QUANTITY = Pattern.compile("\\b(\\d{1,4}|a|an|one|two|three|four|five|six|seven|eight|nine|ten|couple|pair|few|several)\\s+(?:of\\s+)?(hundred|thousand|k|kk|mil|million)\\b", Pattern.CASE_INSENSITIVE);
+	// A vague "just give me a normal amount" answer, with no number at all: fall back to the item's default stack.
+	public static final Pattern VAGUE_BULK = Pattern.compile("\\b(some|a\\s+bunch|bunch|a\\s+stack|stack|full\\s+stack|a\\s+lot|lots|plenty|whatever|however\\s+many|ur\\s+call|your\\s+call|dealers?\\s+choice)\\b", Pattern.CASE_INSENSITIVE);
+	/** {@link #parseSpokenQuantity} sentinel: the player wants a normal amount but named no number - use the default stack. */
+	public static final int SPOKEN_QUANTITY_DEFAULT = -1;
 
 	private FakePlayerChatParsing()
 	{
@@ -83,6 +96,160 @@ public final class FakePlayerChatParsing
 			}
 		}
 		return 0;
+	}
+
+	/**
+	 * Extract a unit price the player explicitly stated in a WTS/WTB ad (e.g. "wtb ssd 300 adena", "wts ss 5k ea",
+	 * "ssd @300"). Only a number carrying a price cue is read as a price, so a bare quantity ("wtb 5k ssd") is never
+	 * mistaken for one. The k/kk/m suffix is applied. This is deterministic (no LLM), and the caller still clamps the
+	 * result into a sane band around the item's value, so an absurd or adversarial price cannot open an exploit store.
+	 * @param phrase the free-text remainder of the trade ad (the words after WTS/WTB)
+	 * @return the first stated unit price in (0, 2,000,000,000], or 0 when the player named no price
+	 */
+	public static int parseTradeUnitPrice(String phrase)
+	{
+		if (phrase == null)
+		{
+			return 0;
+		}
+		final Matcher matcher = TRADE_UNIT_PRICE.matcher(phrase);
+		while (matcher.find())
+		{
+			final String digits = (matcher.group(1) != null) ? matcher.group(1) : matcher.group(3);
+			if (digits == null)
+			{
+				continue;
+			}
+			final String suffix = (matcher.group(1) != null) ? matcher.group(2) : matcher.group(4);
+			long value = Long.parseLong(digits);
+			if ("k".equalsIgnoreCase(suffix))
+			{
+				value *= 1000L;
+			}
+			else if ("kk".equalsIgnoreCase(suffix) || "m".equalsIgnoreCase(suffix))
+			{
+				value *= 1000000L;
+			}
+
+			if ((value > 0) && (value <= 2_000_000_000L))
+			{
+				return (int) value;
+			}
+		}
+		return 0;
+	}
+
+	/**
+	 * Resolve an amount from a player's reply to "how many do you want?", tolerant of the vague ways people
+	 * actually answer. Recognises, in order: a spelled-out or digit count with a magnitude word ("a couple
+	 * thousand" = 2000, "few hundred" = 300, "2 thousand" = 2000, "a million" = 1,000,000, capped at 2,000,000);
+	 * plain digits with an optional k/kk/m suffix ("5k" = 5000) via {@link #parseTradeQuantity}; and a vague bulk
+	 * answer with no number ("some", "a stack", "whatever") which returns {@link #SPOKEN_QUANTITY_DEFAULT} so the
+	 * caller uses the item's normal stack size.
+	 * @param text the player's reply (strip any stated price first with {@link #stripStatedPrices})
+	 * @return a concrete amount in (0, 2,000,000], {@link #SPOKEN_QUANTITY_DEFAULT} for a numberless bulk ask, or 0 when no amount was given
+	 */
+	public static int parseSpokenQuantity(String text)
+	{
+		if (text == null)
+		{
+			return 0;
+		}
+		final Matcher mag = MAGNITUDE_QUANTITY.matcher(text);
+		if (mag.find())
+		{
+			final long value = (long) spokenNumber(mag.group(1)) * magnitudeValue(mag.group(2));
+			if (value > 0)
+			{
+				return (int) Math.min(value, 2_000_000L);
+			}
+		}
+		final int digits = parseTradeQuantity(text, true);
+		if (digits > 0)
+		{
+			return digits;
+		}
+		return VAGUE_BULK.matcher(text).find() ? SPOKEN_QUANTITY_DEFAULT : 0;
+	}
+
+	/** A digit string or a small spelled-out count word to its value ("couple" -&gt; 2, "few" -&gt; 3); 0 if unknown. */
+	private static int spokenNumber(String word)
+	{
+		if (word == null)
+		{
+			return 0;
+		}
+		final String w = word.toLowerCase();
+		if (w.matches("\\d{1,4}"))
+		{
+			return Integer.parseInt(w);
+		}
+		switch (w)
+		{
+			case "a":
+			case "an":
+			case "one":
+				return 1;
+			case "two":
+			case "couple":
+			case "pair":
+				return 2;
+			case "three":
+			case "few":
+				return 3;
+			case "four":
+			case "several":
+				return 4;
+			case "five":
+				return 5;
+			case "six":
+				return 6;
+			case "seven":
+				return 7;
+			case "eight":
+				return 8;
+			case "nine":
+				return 9;
+			case "ten":
+				return 10;
+			default:
+				return 0;
+		}
+	}
+
+	/** A magnitude word to its multiplier: hundred -&gt; 100, thousand/k -&gt; 1000, kk/mil/million -&gt; 1,000,000. */
+	private static long magnitudeValue(String magnitude)
+	{
+		switch (magnitude.toLowerCase())
+		{
+			case "hundred":
+				return 100L;
+			case "thousand":
+			case "k":
+				return 1000L;
+			case "kk":
+			case "mil":
+			case "million":
+				return 1_000_000L;
+			default:
+				return 1L;
+		}
+	}
+
+	/**
+	 * Blank out any explicitly-priced number ("300 adena", "5k ea", "@300") in a phrase so a following
+	 * {@link #parseTradeQuantity} reads the amount, not the price. Without this, "5000 at 300 adena" or
+	 * "300 adena each, i want 5000" could hand the price to the quantity parser (it takes the first sane number).
+	 * @param phrase the raw phrase
+	 * @return the phrase with priced tokens replaced by spaces (never {@code null})
+	 */
+	public static String stripStatedPrices(String phrase)
+	{
+		if (phrase == null)
+		{
+			return "";
+		}
+		return TRADE_UNIT_PRICE.matcher(phrase).replaceAll(" ");
 	}
 
 	/**
