@@ -651,7 +651,12 @@ public class PhantomPlaystyleEngine
 	private static boolean inReach(Player npc, Monster focus, Skill skill)
 	{
 		final int reach = (skill.getCastRange() > 0) ? (skill.getCastRange() + RANGE_SLACK) : ((skill.getAffectRange() > 0) ? skill.getAffectRange() : MELEE_REACH + RANGE_SLACK);
-		return npc.calculateDistance2D(focus) <= reach;
+		// Collision-aware, so this matches the range the rest of the core actually fights at: CreatureAI.maybeMoveToPawn
+		// parks the attacker at reach + BOTH collision radii, and LocationUtil.checkIfInRange adds the same. A raw
+		// center-to-center check reads a large raid boss (big collision radius) as out of reach while the phantom is
+		// physically beside it auto-attacking, wrongly suppressing melee/short-range playstyle skills on exactly the
+		// targets they matter most on.
+		return LocationUtil.checkIfInRange(reach, npc, focus, false);
 	}
 
 	/**
