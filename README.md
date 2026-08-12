@@ -40,7 +40,7 @@ suggestions, join our [L2 Living Worlds Discord](https://discord.gg/6KTyDG55PA).
 The easiest way to play. You do **not** need Java, a database, or any setup.
 
 1. Download the latest **`version release`** from the
-   [**Releases**](../../releases) page.
+   [**Releases**](../../releases) page. DO NOT download the patch if it's your first download. Download the normal version.
 2. Unzip it anywhere.
 3. Double-click the **`Control-Panel.bat`** for the alpha GUI launcher version or **`Start-Server.bat`** to skip the launcer.
 
