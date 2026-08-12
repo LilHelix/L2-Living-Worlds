@@ -139,6 +139,8 @@ public class PhantomPartyManager
 	private static final int RAID_BACKLINE_RANGE = 720; // raid ranged/support lane: far enough to avoid melee AoE, close enough for heals
 	private static final int RAID_BACKLINE_TOLERANCE = 140;
 	private static final int RAID_SPREAD_STEP = 140;
+	private static final int LOS_STEP = 150; // when a backline stand point can't see the boss, pull it this much closer and retry
+	private static final int LOS_STEP_MIN = 200; // closest a ranged member is pulled in to regain line of sight (still outside melee)
 	// Archers must hold INSIDE bow reach (the generic 720 backline is past a bow's ~500 range, so they could never fire
 	// from it - the big ranged DPS bug). Hold range is derived from the bow's actual reach; the spread is tighter than
 	// the caster lane so the outer lanes (radial + lateral) still land within reach.
@@ -2932,6 +2934,18 @@ public class PhantomPartyManager
 		}
 		if ((tank == null) || tank.npc.isDead())
 		{
+			// No recruited phantom tank, but the human leader may be personally tanking. When that human tank actually
+			// holds this raid mob's hate, release DPS now (and mark the target released for the pull, mirroring the
+			// phantom-tank owns-target path below) instead of making the party wait out the no-tank fail-open timeout.
+			// Gated on the human being most-hated so a tank-class leader who is NOT holding aggro still falls through to
+			// the timeout rather than freezing DPS behind a tank that is not doing its job.
+			final Player humanTank = humanRaidTank(state);
+			if ((humanTank != null) && (raid.getMostHated() == humanTank))
+			{
+				_releasedRaidTargets.add(raidKey(ownerId, raid.getObjectId()));
+				_noTankSince.remove(ownerId);
+				return true;
+			}
 			final long noTankNow = System.currentTimeMillis();
 			final Long since = _noTankSince.putIfAbsent(ownerId, noTankNow);
 			if ((since != null) && ((noTankNow - since) >= NO_TANK_FAILOPEN_MS))
@@ -3170,9 +3184,10 @@ public class PhantomPartyManager
 		final double perpX = -ny;
 		final double perpY = nx;
 		final int lane = ((npc.getObjectId() % 7) - 3) * spreadStep; // -3..+3 stable lanes
-		final int standX = raid.getX() + (int) (nx * desiredRange) + (int) (perpX * lane);
-		final int standY = raid.getY() + (int) (ny * desiredRange) + (int) (perpY * lane);
-		final Location destination = GeoEngine.getInstance().getValidLocation(npc, new Location(standX, standY, npc.getZ()));
+		// LOS-validated: a far backline lane in a cramped raid room clips behind a wall/pillar, and the core silently
+		// rejects an offensive cast with no line of sight - so a caster/archer parked there never fires and reads as
+		// idle. Pull the stand point inward until it can actually see the boss instead of committing to a blind lane.
+		final Location destination = losStandPoint(npc, raid, nx, ny, perpX, perpY, desiredRange, lane);
 		if (npc.calculateDistance2D(destination) <= tolerance)
 		{
 			state.positionTicks = 0;
@@ -3182,6 +3197,42 @@ public class PhantomPartyManager
 		npc.setRunning();
 		npc.getAI().setIntention(Intention.MOVE_TO, destination);
 		return true;
+	}
+
+	/**
+	 * A ranged stand point at {@code desiredRange} from {@code target} on the {@code (nx,ny)} bearing with a lateral
+	 * {@code lane} offset, but pulled inward toward the target until it has line of sight. A cramped raid room clips a
+	 * far, fanned-out backline point behind a wall or the boss's own bulk, and the core silently rejects an offensive
+	 * cast with no LOS, so a member parked there never lands a spell. Steps in along the bearing first (keeping the
+	 * anti-stack fan when it can), then straight in without the fan, and finally falls back to a close point on the
+	 * target line - being in melee AoE and casting beats standing far back doing nothing.
+	 */
+	private Location losStandPoint(Player npc, Creature target, double nx, double ny, double perpX, double perpY, int desiredRange, int lane)
+	{
+		final GeoEngine geo = GeoEngine.getInstance();
+		final int instanceId = npc.getInstanceId();
+		final int tx = target.getX();
+		final int ty = target.getY();
+		final int tz = target.getZ();
+		for (int range = desiredRange; range >= LOS_STEP_MIN; range -= LOS_STEP)
+		{
+			final Location candidate = geo.getValidLocation(npc, new Location(tx + (int) (nx * range) + (int) (perpX * lane), ty + (int) (ny * range) + (int) (perpY * lane), npc.getZ()));
+			if (geo.canSeeTarget(candidate.getX(), candidate.getY(), candidate.getZ(), tx, ty, tz, instanceId))
+			{
+				return candidate;
+			}
+		}
+		// The fanned lane never cleared (a tight room); drop the lateral offset and step straight in on the target line.
+		for (int range = desiredRange; range >= LOS_STEP_MIN; range -= LOS_STEP)
+		{
+			final Location candidate = geo.getValidLocation(npc, new Location(tx + (int) (nx * range), ty + (int) (ny * range), npc.getZ()));
+			if (geo.canSeeTarget(candidate.getX(), candidate.getY(), candidate.getZ(), tx, ty, tz, instanceId))
+			{
+				return candidate;
+			}
+		}
+		// Last resort: hug the target line at the minimum range - almost always has LOS, and a close cast beats none.
+		return geo.getValidLocation(npc, new Location(tx + (int) (nx * LOS_STEP_MIN), ty + (int) (ny * LOS_STEP_MIN), npc.getZ()));
 	}
 
 	/**
@@ -4955,6 +5006,23 @@ public class PhantomPartyManager
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * The human party leader when they are personally acting as the raid tank: a living tank-class player. Returned only
+	 * for the human, never a phantom - the recruited tank keeps its own {@link Member} path (recovery, reclaim, taunt
+	 * upkeep) which a human does not have. Used to release DPS immediately once the human genuinely holds the boss,
+	 * instead of leaning on the no-tank fail-open timeout. It deliberately does NOT stand in for the phantom tank in the
+	 * squishy self-defense / reclaim logic: a human is not guaranteed to re-taunt, so those paths stay fail-open.
+	 */
+	private Player humanRaidTank(Member state)
+	{
+		final Player owner = state.owner;
+		if ((owner == null) || owner.isDead())
+		{
+			return null;
+		}
+		return (PhantomManager.roleForClass(owner.getPlayerClass()) == PartyRole.TANK) ? owner : null;
 	}
 
 	/** {@code true} if a live raid boss is in combat near the party - drives pre-emptive healing and no MP-sitting. */
