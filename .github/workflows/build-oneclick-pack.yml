@@ -12,6 +12,10 @@ on:
         description: "Portable MariaDB version to bundle"
         required: false
         default: "11.4.5"
+      version:
+        description: "Release tag to stamp into the pack (e.g. v0.1.12) so the in-app updater knows its version"
+        required: false
+        default: ""
 
 jobs:
   build-pack:
@@ -43,9 +47,11 @@ jobs:
         run: |
           $mdv = "${{ github.event.inputs.mariadb_version }}"
           if ([string]::IsNullOrWhiteSpace($mdv)) { $mdv = "11.4.5" }
+          $ver = "${{ github.event.inputs.version }}"
           powershell -ExecutionPolicy Bypass -File "dist/launcher/build-pack.ps1" `
             -JdkHome "$env:JAVA_HOME" `
             -MariaDbVersion "$mdv" `
+            -Version "$ver" `
             -OutDir "."
 
       - name: Upload the pack

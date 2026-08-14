@@ -303,6 +303,89 @@ public final class FakePlayerChatParsing
 		return offeredUnitPrice;
 	}
 
+	/**
+	 * Read a counteroffer unit price from a player's reply during a LIVE deal - the bot has already quoted a price
+	 * and the two are haggling. This is stricter about intent than {@link #parseTradeUnitPrice} in one way and
+	 * looser in another: an explicit per-unit price ("@12k", "12k each") is taken as-is, but because the deal
+	 * context makes the intent unambiguous, a bare shorthand number ("12k?", "can you do 12k", "make it 10k") is
+	 * also read as the counter here. A bare number with NO k/kk/m suffix and NO price cue is deliberately ignored,
+	 * so a plain quantity ("i'll take 5000") is never mistaken for a price. The suffix multiplier is applied. This
+	 * is deterministic (no LLM); the caller must still clamp the result into a sane band around the current offer
+	 * (see {@link #resolveDealPrice}) before trusting it, so an absurd or adversarial counter cannot take hold.
+	 * @param text the player's whispered reply during an active deal
+	 * @return the counteroffer unit price in (0, 2,000,000,000], or 0 when the player named no price
+	 */
+	public static int parseCounterOffer(String text)
+	{
+		if (text == null)
+		{
+			return 0;
+		}
+		// An explicit per-unit price ("@12k", "12k ea/each/adena") is unambiguous - take it first.
+		final int explicit = parseTradeUnitPrice(text);
+		if (explicit > 0)
+		{
+			return explicit;
+		}
+		// Otherwise a shorthand number IS the counter in a live haggle, but only when it carries a k/kk/m suffix;
+		// a bare number could be a quantity, so it is left to the quantity parser.
+		final Matcher matcher = TRADE_QUANTITY.matcher(text);
+		while (matcher.find())
+		{
+			final String suffix = matcher.group(2);
+			if ((suffix == null) || suffix.isEmpty())
+			{
+				continue; // bare number - ambiguous with quantity, skip it
+			}
+			long value = Long.parseLong(matcher.group(1));
+			if ("k".equalsIgnoreCase(suffix))
+			{
+				value *= 1000L;
+			}
+			else if ("kk".equalsIgnoreCase(suffix) || "m".equalsIgnoreCase(suffix))
+			{
+				value *= 1000000L;
+			}
+			if ((value > 0) && (value <= 2_000_000_000L))
+			{
+				return (int) value;
+			}
+		}
+		return 0;
+	}
+
+	/** How far a bot will haggle from its own quoted price before it refuses: 15% either way. */
+	public static final double COUNTER_HAGGLE_TOLERANCE = 0.15;
+
+	/**
+	 * The bot's negotiation policy: does it accept the player's counteroffer, or hold its price? This is a genuine
+	 * business decision, distinct from {@link #resolveDealPrice} (which only guards a corrupted brain tag). The
+	 * bot's own quoted price is the anchor: any counter that is better for the bot is always taken, and it will
+	 * concede a small haggle up to {@link #COUNTER_HAGGLE_TOLERANCE} the wrong way, but a counter beyond that is
+	 * refused so the bot keeps its price instead of the player unilaterally setting it by asking. Kept pure and
+	 * deterministic so Java, not the model, owns accept/reject.
+	 * @param counter the player's proposed unit price (from {@link #parseCounterOffer}); {@code <=0} means none
+	 * @param offeredUnit the bot's current quoted unit price (its authoritative anchor); {@code <=0} means unknown
+	 * @param selling {@code true} when the bot is the seller (a higher counter helps it), {@code false} when buyer
+	 * @return {@code true} to accept the counter at that price, {@code false} to refuse and hold the quoted price
+	 */
+	public static boolean acceptsCounter(int counter, int offeredUnit, boolean selling)
+	{
+		if ((counter <= 0) || (offeredUnit <= 0))
+		{
+			return false;
+		}
+		if (selling)
+		{
+			// Bot sells: a counter at or above its ask is pure profit; below the ask it concedes down to the floor.
+			final long floor = Math.round(offeredUnit * (1.0 - COUNTER_HAGGLE_TOLERANCE));
+			return counter >= floor;
+		}
+		// Bot buys: a counter at or below its ask is pure profit; above the ask it concedes up to the ceiling.
+		final long ceiling = Math.round(offeredUnit * (1.0 + COUNTER_HAGGLE_TOLERANCE));
+		return counter <= ceiling;
+	}
+
 	/** @return the level requested in an LFP shout (1-80), or 0 when none is given (match the recruiter). */
 	public static int parseLfpLevel(String text)
 	{

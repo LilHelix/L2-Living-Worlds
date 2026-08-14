@@ -91,9 +91,10 @@ public class PhantomPartyManager
 	 * Raid combat trace. When on, the manager logs (to the gameserver log) a periodic snapshot of every party with a
 	 * raid boss engaged - boss HP and who it's hating, plus each member's role/HP/MP/action - and event lines for
 	 * taunts, heals, res and deaths. Raid-only, so it's silent during normal farming. Toggle live with
-	 * {@code //phantom debug on|off}. Defaults on so the first pull after a rebuild is already traced.
+	 * {@code //phantom debug on|off} (or the {@code //debug_on} / {@code //debug_off} shortcuts). Defaults off;
+	 * turn it on for a raid session when a trace is needed, so a normal live server does not carry the log cost.
 	 */
-	public static volatile boolean DEBUG = true;
+	public static volatile boolean DEBUG = false;
 	private static final long RAID_LOG_INTERVAL = 1500; // throttle for the periodic snapshot
 	private long _lastRaidLog;
 
@@ -484,6 +485,8 @@ public class PhantomPartyManager
 		long peelMoveAt; // ...and when it last stepped away from it, so kite moves aren't re-issued every tick
 		Skill peelControl; // lazy: the control skill it peels with (Stunning Shot / Sleep / Root ...)
 		boolean peelControlLookedUp;
+		String raidGateReason; // DEBUG: the reason code the raid engage gate (mayAttackRaid) last recorded for this member
+		String raidGateLogged; // DEBUG: the reason last written to the log, so a steady state is logged once, not every tick
 
 		Member(Player npc, PartyRole role)
 		{
@@ -547,6 +550,9 @@ public class PhantomPartyManager
 	// ownerId -> first tick a raid check found no living tank. Cleared once a tank exists again or the raid
 	// gate resets (clearRaidRelease); see NO_TANK_FAILOPEN_MS.
 	private final ConcurrentHashMap<Integer, Long> _noTankSince = new ConcurrentHashMap<>();
+	// DEBUG only: ownerIds whose current raid engagement has already printed its one-time "ENGAGE START" banner, so a
+	// fresh pull banners once instead of every snapshot. Pruned when the party is no longer engaged with a raid.
+	private final Set<Integer> _raidTraceBannered = ConcurrentHashMap.newKeySet();
 	// Targets a support has already committed a heal to THIS tick. Cleared each tick. Stops two healers (processed in
 	// the same tick pass) both landing a big heal on the same target before either is flagged "casting" - the in-game
 	// double/triple overheal that burned the healers' MP twice as fast and ended raids in a mass-OOM wipe.
@@ -1002,6 +1008,7 @@ public class PhantomPartyManager
 				state.pullOrdered = true;
 				state.pullSince = System.currentTimeMillis();
 				deliver(state, "pulling - hold dps till i have aggro");
+				dbg("ORDER 'tank attack' -> TANK '" + state.npc.getName() + "' pullOrdered (party of '" + owner.getName() + "')");
 			}
 			return true;
 		}
@@ -1010,6 +1017,7 @@ public class PhantomPartyManager
 		{
 			_released.add(owner.getObjectId());
 			_releasedRaidTargets.removeIf(key -> raidOwnerId(key) == owner.getObjectId());
+			dbg("ORDER 'all attack' -> party of '" + owner.getName() + "' released (all members may engage the raid)");
 			if (state.role == PartyRole.TANK)
 			{
 				state.pullOrdered = true;
@@ -1757,10 +1765,16 @@ public class PhantomPartyManager
 		}
 	}
 
-	/** One snapshot per engaged party: the boss (HP + who it's hating) and every member's role/HP/MP/action. */
+	/**
+	 * One snapshot per engaged party: the boss (HP + who it's hating) and every member's role/HP/MP/action, now with
+	 * the engage-gate reason so a member reported as {@code idle} also says WHY (e.g. {@code HOLD/TANK_NOT_ORDERED} or
+	 * {@code HOLD/NO_TANK_WAIT(6/20s)}). The first snapshot of a fresh engagement also prints a one-time ENGAGE START
+	 * banner dumping the initial roster + pull state, so "phantoms standing around" has a full trace from the pull.
+	 */
 	private void logRaidSnapshot()
 	{
 		final Set<Integer> seenParties = new HashSet<>();
+		final Set<Integer> engagedNow = new HashSet<>();
 		for (Member state : _members.values())
 		{
 			final Player owner = state.owner;
@@ -1777,6 +1791,7 @@ public class PhantomPartyManager
 			{
 				continue;
 			}
+			engagedNow.add(owner.getObjectId());
 			final StringBuilder bosses = new StringBuilder();
 			for (Monster boss : raids)
 			{
@@ -1784,14 +1799,33 @@ public class PhantomPartyManager
 				{
 					bosses.append(" | ");
 				}
-				bosses.append("'").append(boss.getName()).append("' hp=").append(boss.getCurrentHpPercent()).append("% hating=").append(describe(boss.getMostHated()));
+				bosses.append("'").append(boss.getName()).append("' lvl=").append(boss.getLevel()).append(" hp=").append(boss.getCurrentHpPercent()).append("% hating=").append(describe(boss.getMostHated()));
+			}
+			// One-time ENGAGE START banner for a fresh pull: the roster, whether a tank is present/pulling, and the
+			// party-wide release flags - the state that decides whether anyone is allowed to swing.
+			if (_raidTraceBannered.add(owner.getObjectId()))
+			{
+				final Member tank = findTankState(state);
+				final Player humanTank = humanRaidTank(state);
+				dbg("##### ENGAGE START party of '" + owner.getName() + "' vs " + bosses + " #####");
+				dbg("  pull-state: released=" + _released.contains(owner.getObjectId()) //
+					+ " phantomTank=" + ((tank == null) ? "none" : ("'" + tank.npc.getName() + "' pullOrdered=" + tank.pullOrdered + " dead=" + tank.npc.isDead())) //
+					+ " humanTank=" + ((humanTank == null) ? "none" : ("'" + humanTank.getName() + "'")));
+				for (Player member : owner.getParty().getMembers())
+				{
+					dbg("  roster: " + roleLabel(member) + " '" + member.getName() + "' lvl=" + member.getLevel());
+				}
 			}
 			dbg("=== raid " + bosses + " ===");
 			for (Player member : owner.getParty().getMembers())
 			{
-				dbg("  " + roleLabel(member) + " '" + member.getName() + "' hp=" + member.getCurrentHpPercent() + "% mp=" + member.getCurrentMpPercent() + "% " + action(member));
+				final Member ms = _members.get(member.getObjectId());
+				final String reason = (ms == null) ? "" : (" gate=" + (ms.raidGateReason == null ? "?" : ms.raidGateReason));
+				dbg("  " + roleLabel(member) + " '" + member.getName() + "' hp=" + member.getCurrentHpPercent() + "% mp=" + member.getCurrentMpPercent() + "% " + action(member) + reason);
 			}
 		}
+		// Prune banner flags for parties no longer engaged, so the next pull re-banners from scratch.
+		_raidTraceBannered.retainAll(engagedNow);
 	}
 
 	/** A live raid boss in combat near this member, or {@code null} - the boss to report on / the trigger for the trace. */
@@ -2881,6 +2915,21 @@ public class PhantomPartyManager
 	 * than a whole-fight release: Zaken-style fights can have a boss, Inferior, and Bats active together, and ranged
 	 * DPS should not unload on an untanked add just because the tank briefly owned the first target.
 	 */
+	/**
+	 * Records the raid-gate verdict and its reason code on the member (DEBUG bookkeeping only) and returns the verdict
+	 * unchanged. Every {@link #mayAttackRaid} exit funnels through here, so the periodic snapshot can report exactly
+	 * WHY a member is holding fire instead of only that it is idle. Has no effect on behaviour: the side effects that
+	 * already ran before the return are untouched, and when {@link #DEBUG} is off this is a plain pass-through.
+	 */
+	private boolean gate(Member state, boolean allowed, String reason)
+	{
+		if (DEBUG)
+		{
+			state.raidGateReason = (allowed ? "GO/" : "HOLD/") + reason;
+		}
+		return allowed;
+	}
+
 	private boolean mayAttackRaid(Member state, Monster raid)
 	{
 		final Player owner = state.owner;
@@ -2892,36 +2941,36 @@ public class PhantomPartyManager
 		// their master). Uses THIS member's level, since level spread can put one recruit over the line alone.
 		if (!NpcConfig.RAID_DISABLE_CURSE && raid.giveRaidCurse() && (state.npc.getLevel() > (raid.getLevel() + RAID_CURSE_LEVEL_GAP)))
 		{
-			return false;
+			return gate(state, false, "RAID_CURSE_GAP(lvl " + state.npc.getLevel() + " vs boss " + raid.getLevel() + ")");
 		}
 		if (_released.contains(ownerId))
 		{
-			return true; // explicit "all attack" order - the player accepted the risk
+			return gate(state, true, "ALL_ATTACK_ORDER"); // explicit "all attack" order - the player accepted the risk
 		}
 		if (state.role == PartyRole.TANK)
 		{
 			if (!state.pullOrdered)
 			{
-				return false; // tank waits for the "tank attack" order before pulling
+				return gate(state, false, "TANK_NOT_ORDERED"); // tank waits for the "tank attack" order before pulling
 			}
 			if (raid.getMostHated() == state.npc)
 			{
 				_releasedRaidTargets.add(raidKey(ownerId, raid.getObjectId()));
 			}
-			return true;
+			return gate(state, true, "TANK_PULLING");
 		}
 
 		// Execute rule: a raid minion in its last sliver is finished by anyone.
 		if (raid.isRaidMinion() && (raid.getCurrentHpPercent() <= MINION_EXECUTE_PERCENT))
 		{
-			return true;
+			return gate(state, true, "MINION_EXECUTE");
 		}
 		// Defend the leader: a minion whose most-hated is the PLAYER is attackable by everyone - the party helps
 		// the human kill the thing that is chasing them (second Ruell attempt: the party watched, gated, while the
 		// leader soloed a Wind add from 19% down and eventually died to it).
 		if (raid.isRaidMinion() && (raid.getMostHated() == owner))
 		{
-			return true;
+			return gate(state, true, "DEFEND_LEADER");
 		}
 		final Member tank = findTankState(state);
 		// Raid self-defense: this raid mob is ON this member (most-hated) - standing still sheds no hate in L2,
@@ -2930,7 +2979,7 @@ public class PhantomPartyManager
 		// back, which beats out-damaging the taunt).
 		if ((raid.getMostHated() == state.npc) && (raid.isRaidMinion() || (tank == null) || tank.npc.isDead()))
 		{
-			return true;
+			return gate(state, true, "SELF_DEFENSE");
 		}
 		if ((tank == null) || tank.npc.isDead())
 		{
@@ -2944,7 +2993,7 @@ public class PhantomPartyManager
 			{
 				_releasedRaidTargets.add(raidKey(ownerId, raid.getObjectId()));
 				_noTankSince.remove(ownerId);
-				return true;
+				return gate(state, true, "HUMAN_TANK_AGGRO");
 			}
 			final long noTankNow = System.currentTimeMillis();
 			final Long since = _noTankSince.putIfAbsent(ownerId, noTankNow);
@@ -2956,15 +3005,16 @@ public class PhantomPartyManager
 				{
 					deliver(state, "no tank up, going in - say 'hold' to stop");
 				}
-				return true;
+				return gate(state, true, "NO_TANK_FAILOPEN");
 			}
-			return false;
+			final long waited = (since == null) ? 0 : (noTankNow - since);
+			return gate(state, false, "NO_TANK_WAIT(" + (waited / 1000) + "/" + (NO_TANK_FAILOPEN_MS / 1000) + "s)");
 		}
 		_noTankSince.remove(ownerId);
 		final long now = System.currentTimeMillis();
 		if ((tank.recoveryUntil > now) && (tank.npc.getCurrentHpPercent() < POST_RES_TANK_READY_PERCENT))
 		{
-			return false; // tank just stood up; let support heal it and let taunts land before DPS resumes
+			return gate(state, false, "TANK_RECOVERING"); // tank just stood up; let support heal it and let taunts land before DPS resumes
 		}
 		if (tank.npc.getCurrentHpPercent() >= POST_RES_TANK_READY_PERCENT)
 		{
@@ -2976,7 +3026,7 @@ public class PhantomPartyManager
 		if (hated == tank.npc)
 		{
 			_releasedRaidTargets.add(key);
-			return true;
+			return gate(state, true, "TANK_HAS_AGGRO");
 		}
 		// An ADD (raid minion), once opened, stays free for EVERY dps regardless of who currently holds it. The old
 		// rule re-locked the add the moment a party member was most-hated on it - but a melee DD out-aggros the tank
@@ -2986,9 +3036,10 @@ public class PhantomPartyManager
 		// dps still hold off it while it is loose on a squishy and the tank reclaims it.
 		if (_releasedRaidTargets.contains(key) && (raid.isRaidMinion() || (hated == null) || !isPartyMember(state, hated)))
 		{
-			return true;
+			return gate(state, true, "TARGET_RELEASED");
 		}
-		return false; // non-tank waits for the tank to own this exact raid mob/add
+		// non-tank waits for the tank to own this exact raid mob/add - name who currently holds it, the usual culprit
+		return gate(state, false, "BOSS_LOCKED(hate=" + describe(hated) + ")");
 	}
 
 	private boolean hasRaidRelease(Player owner)

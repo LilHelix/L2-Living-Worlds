@@ -24,8 +24,13 @@ build-pack.bat
 or with options:
 
 ```
-powershell -ExecutionPolicy Bypass -File build-pack.ps1 -MariaDbZip C:\downloads\mariadb-11.4.5-winx64.zip
+powershell -ExecutionPolicy Bypass -File build-pack.ps1 -Version v0.1.12 -MariaDbZip C:\downloads\mariadb-11.4.5-winx64.zip
 ```
+
+A baseline `launcher\version.txt` is committed in the repo (currently `v0.1.14`) and ships in the pack, so
+every build shows a real version in the Control Panel and compares correctly in the update checker.
+Pass `-Version <tag>` to override it for a specific release; without it, the committed baseline is used.
+**Per release, bump `dist\launcher\version.txt` (or pass `-Version`) to the tag you publish.**
 
 What it does:
 
@@ -60,11 +65,28 @@ the servers and the bundled DB down cleanly.
 
 ---
 
-## Updating an existing install (patch zip)
+## Checking for updates from inside the pack (automatic)
 
-Alongside the full `L2J-Offline-OneClick.zip`, the build also produces a small **`L2J-Offline-Patch.zip`**
-containing only the files that changed this release (`libs\GameServer.jar` plus whatever is listed in
-`patch-manifest.txt`). It exists so a tester who already has the pack installed can update **without
+The pack can update itself. Double-click **`Check-Updates.bat`** (or use the **Check for updates**
+button in the Control Panel). It:
+
+1. Reads `launcher\version.txt` (stamped at build time by `-Version`).
+2. Asks the public repo `Teravibes/L2-Living-Worlds` for the newest release. Each version is published
+   twice: `vX.Y.Z` (the full pack) and `vX.Y.Z-patch` (the overlay). The checker compares by version
+   number, ignoring the `-patch` suffix.
+3. If you are behind, it asks for confirmation, then **stops the server, downloads the `-patch` asset,
+   overlays it on your install, and stamps the new version.** Your `mariadb\` database and any configs
+   you customized are never touched (the patch zip does not contain them).
+
+`update.ps1` is the single implementation behind both the `.bat` and the Control Panel button. It never
+applies anything without asking first.
+
+## Updating an existing install (patch zip, manual)
+
+The automatic checker above downloads exactly this artifact. You can also apply it by hand. Alongside
+the full `L2J-Offline-OneClick.zip`, the build produces a small **`L2J-Offline-Patch.zip`** containing
+only the files that changed this release (`libs\GameServer.jar` and `launcher\version.txt` plus whatever
+is listed in `patch-manifest.txt`). A tester who already has the pack installed can update **without
 losing their database**:
 
 1. `Stop-Server.bat`.
@@ -97,7 +119,41 @@ broken patch. No manifest → the patch step is skipped and only the full pack i
    any exist* — because ~14 SQL files `DROP TABLE` before recreating (e.g. `accounts`), importing
    over a live DB would wipe those. Auto-skip means running on a set-up machine never touches data.
 5. **Login server, then Game server** — each in its own console window, using each `java.cfg`.
-6. Optional **Python brain** (off by default).
+6. Optional **Python brain** (off by default). When `StartBrain=true`, the launcher calls
+   `setup_brain.bat --auto`, which starts the brain **only if it has already been configured**
+   (an `.env` + `.venv` exist) and otherwise skips without prompting, so a normal boot never hangs.
+7. Optional **game client** (off by default). When `LaunchClient=true`, the launcher waits for the game
+   port, then opens `ClientExe`. Stop-Server leaves the client open.
+
+## Optional AI brain (in-character bot chat)
+
+The bots can hold in-character chat through a small local Flask service, the "brain". It is **optional
+and off by default** — the server and all the bots work fully without it; this only adds the talking.
+
+- **Set it up once:** double-click **`Configure-Brain.bat`** (or the **Set up / configure brain** button
+  in the Control Panel). It installs Python if needed and lets you choose **Ollama** (free, local, offline,
+  needs a decent GPU/CPU) or **DeepSeek** (cloud API, needs a key). It writes `.env`, builds the
+  virtualenv, and starts the brain on `http://127.0.0.1:5000`.
+- **After that, it starts straight in:** once set up, the same button/`Configure-Brain.bat` skips the
+  provider question and just launches the brain. To **switch provider**, run `setup_brain.bat --reset`
+  (wipes `.env` and asks fresh).
+- **Start it automatically with the server:** set `StartBrain=true` in `launcher\launcher.ini`, or tick
+  **Start the FPC brain with the server** in the Control Panel. On boot the launcher launches the brain
+  non-interactively — but only after you have configured it once with the step above.
+
+## Launch the game client too (one double-click for everything)
+
+The launcher can open your L2 client once the server is up, so a single start brings up the whole thing:
+
+- **Point it at your client:** in the Control Panel, click **Set game client...** and pick the exe you
+  normally run (usually `system\L2.exe`, or your own patcher/bootstrapper exe). That saves the path to
+  `launcher\launcher.ini` (`[client] ClientExe=`) and ticks **Launch the game client with the server**.
+  You can also set `ClientExe=` and `LaunchClient=true` by hand in the ini.
+- **On start:** the launcher waits for the game server to bind its port, then opens the client from its
+  own folder. **Stop-Server leaves the client open** (it just disconnects) — stopping only shuts down the
+  server and database.
+- **Note:** the launcher only *opens* the client. Making the client *connect* to your server is the
+  client's own one-time setup (its server-list address in `l2.ini`), not something the launcher changes.
 
 ## Testing without the full pack (external DB path)
 

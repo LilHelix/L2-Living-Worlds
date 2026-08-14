@@ -4,6 +4,7 @@ import json
 import time
 import hashlib
 import random
+import threading
 from collections import defaultdict, deque
 from flask import Flask, request, Response
 from openai import OpenAI
@@ -24,9 +25,24 @@ else:
 app = Flask(__name__)
 
 conversations = defaultdict(lambda: deque(maxlen=20))  # private whisper memory per (player, bot)
-trade_log = deque(maxlen=12)                            # shared global TRADE memory
-say_log = deque(maxlen=12)                              # shared local SAY memory
-shout_log = deque(maxlen=12)                            # shared global SHOUT (!) memory
+trade_log = deque(maxlen=12)                            # shared global TRADE memory (trade chat is server-wide)
+shout_log = deque(maxlen=12)                            # shared global SHOUT (!) memory (shout is server-wide)
+
+# SAY is a proximity/local channel, so its short-term history must NOT be shared across the whole world:
+# a conversation in Giran should never leak in as context to a bot reacting in Dion or a hunting zone. Each
+# coarse location (the "in <town>" / "near <town>" label Java already sends as X-Location) keeps its own small
+# history. The set of location labels is finite (one per town), so this map does not grow unbounded.
+say_logs = defaultdict(lambda: deque(maxlen=12))        # per-location SAY memory, keyed by location label
+
+# Private (player, bot) whisper histories are pruned after this much inactivity so the map does not grow
+# without bound as players come and go. Persistent player facts live in _memory and are unaffected.
+CONVERSATION_TTL_SECONDS = 6 * 3600
+_conversation_seen = {}                                 # (player, bot) -> last-access epoch seconds
+_conversation_lock = threading.RLock()
+
+# Persistent memory is mutated and written from Flask request threads; guard the read-modify-write + file
+# save so concurrent requests cannot interleave and lose or corrupt a player's facts.
+_memory_lock = threading.RLock()
 
 # ===== Persistent lightweight player memory =====
 # Player-global on purpose: generated fake-player names are random across server restarts, so tying
@@ -36,6 +52,32 @@ MEMORY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory")
 MEMORY_FILE = os.path.join(MEMORY_DIR, "fpc_memory.json")
 MEMORY_MAX_FACTS_PER_CATEGORY = 18
 _memory = {}
+
+# ===== Conversation + local-chat helpers =====
+
+def _prune_conversations(now):
+    """Drop private (player, bot) whisper histories that have gone quiet past the TTL. Cheap and opportunistic;
+    keeps the conversations map from growing forever as players and bots churn."""
+    with _conversation_lock:
+        stale = [key for key, seen in _conversation_seen.items() if (now - seen) > CONVERSATION_TTL_SECONDS]
+        for key in stale:
+            _conversation_seen.pop(key, None)
+            conversations.pop(key, None)
+
+def conversation_for(player, bot):
+    """Return the private whisper history for (player, bot), recording the access time and opportunistically
+    pruning long-idle conversations."""
+    key = (player, bot)
+    now = time.time()
+    with _conversation_lock:
+        _conversation_seen[key] = now
+    _prune_conversations(now)
+    return conversations[key]
+
+def _say_key(location):
+    """Coarse locality key for SAY history. Uses the location label Java sends (e.g. 'in giran', 'near dion');
+    falls back to a single shared bucket only when no location is known."""
+    return (location or "").strip().lower() or "_unknown"
 
 # ===== Guardrails: a single "constitution" prepended to every in-character persona =====
 # Keeps bots in character, resistant to prompt-injection, within a normal player's powers, and PG-13.
@@ -167,6 +209,33 @@ def strip_fake_handle(text):
         return text[match.end():]
     return text
 
+# Prompt scaffolding, when it leaks, shows up as an instruction-style heading at the start of a line
+# ("YOUR PERSONALITY:", "World Facts:", "Memory about this player:", "SYSTEM:") or as a phrase copied
+# straight out of the constitution. These are structural signals, so they catch novel leaks the fixed
+# blacklist never listed. The heading set is curated so ordinary in-game chat lines are not caught.
+_LEAK_HEADING_RE = re.compile(
+    r"(?im)^\s*(?:your\s+)?(?:personality|world\s+facts?|system(?:\s+prompt)?|instructions?|"
+    r"rules?|memory\b[^\n:]*|guidelines?|persona|role\s*play|constitution)\s*:")
+_LEAK_PHRASES = (
+    "real human player",
+    "stay in character",
+    "action tag",
+    "reply with one",
+    "one short line",
+    "under 15 words",
+    "do not add any tag",
+    "never roleplay",
+    "do not roleplay",
+    "the five playable races",
+)
+
+def looks_like_leaked_prompt(text):
+    """True when a reply carries prompt/instruction scaffolding that must never reach game chat."""
+    low = (text or "").lower()
+    if any(p in low for p in _LEAK_PHRASES):
+        return True
+    return bool(_LEAK_HEADING_RE.search(text or ""))
+
 def sanitize(text):
     """Last-line guardrail on a player-visible reply: drop out-of-character / leaked replies and strip
     real-world contact info, HTML-ish junk, and obvious formatting garbage. Returns '' if nothing safe remains."""
@@ -185,6 +254,10 @@ def sanitize(text):
 
     low = t.lower()
     if any(b in low for b in _BANNED):
+        return ""
+    # Positive/structural leak check: drop the whole reply if it carries prompt scaffolding, rather than
+    # trying to strip fragments out of it (a partially-leaked instruction is not worth showing).
+    if looks_like_leaked_prompt(t):
         return ""
     if any(b in low for b in ("said publicly", "i wouldn't pm", "i would pm", "trade chat sees", "parentheses", "stage direction")):
         return ""
@@ -209,26 +282,28 @@ def sanitize(text):
 def load_memory():
     """Load player-global memory from disk. Safe when the file/folder does not exist yet."""
     global _memory
-    try:
-        with open(MEMORY_FILE, encoding="utf-8") as fh:
-            data = json.load(fh)
-            _memory = data if isinstance(data, dict) else {}
-    except OSError:
-        _memory = {}
-    except json.JSONDecodeError:
-        print("Memory: fpc_memory.json is invalid, starting with empty memory.")
-        _memory = {}
+    with _memory_lock:
+        try:
+            with open(MEMORY_FILE, encoding="utf-8") as fh:
+                data = json.load(fh)
+                _memory = data if isinstance(data, dict) else {}
+        except OSError:
+            _memory = {}
+        except json.JSONDecodeError:
+            print("Memory: fpc_memory.json is invalid, starting with empty memory.")
+            _memory = {}
 
 def save_memory():
     """Atomically save memory so a crash does not corrupt the file."""
-    try:
-        os.makedirs(MEMORY_DIR, exist_ok=True)
-        tmp = MEMORY_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(_memory, fh, ensure_ascii=False, indent=2, sort_keys=True)
-        os.replace(tmp, MEMORY_FILE)
-    except OSError as e:
-        print("Memory save error:", e)
+    with _memory_lock:
+        try:
+            os.makedirs(MEMORY_DIR, exist_ok=True)
+            tmp = MEMORY_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(_memory, fh, ensure_ascii=False, indent=2, sort_keys=True)
+            os.replace(tmp, MEMORY_FILE)
+        except OSError as e:
+            print("Memory save error:", e)
 
 def _player_key(player):
     return (player or "").strip().lower()
@@ -258,18 +333,19 @@ def remember_fact(player, category, fact):
         return
     if len(fact) > 220:
         fact = fact[:217] + "..."
-    entry = _memory_entry(player)
-    if entry is None:
-        return
-    facts = entry[category]
-    # De-dupe exact text while keeping newest timestamp.
-    facts = [x for x in facts if (x.get("text") if isinstance(x, dict) else str(x)) != fact]
-    facts.append({
-        "text": fact,
-        "seen": int(time.time()),
-    })
-    entry[category] = facts[-MEMORY_MAX_FACTS_PER_CATEGORY:]
-    save_memory()
+    with _memory_lock:
+        entry = _memory_entry(player)
+        if entry is None:
+            return
+        facts = entry[category]
+        # De-dupe exact text while keeping newest timestamp.
+        facts = [x for x in facts if (x.get("text") if isinstance(x, dict) else str(x)) != fact]
+        facts.append({
+            "text": fact,
+            "seen": int(time.time()),
+        })
+        entry[category] = facts[-MEMORY_MAX_FACTS_PER_CATEGORY:]
+        save_memory()
 
 def memory_note(player, categories=None, k=8):
     """Small prompt block with useful facts remembered about this player."""
@@ -673,6 +749,9 @@ def deal_note_from_headers():
     unit = request.headers.get("X-Deal-Unit-Price", "").strip()
     total = request.headers.get("X-Deal-Total-Price", "").strip()
     needs_count = request.headers.get("X-Deal-Needs-Count", "false").strip().lower() == "true"
+    # Java has already decided whether to accept the player's last price counteroffer; the bot only voices it.
+    decision = request.headers.get("X-Deal-Decision", "").strip().upper()
+    last_counter = request.headers.get("X-Deal-Last-Counter", "").strip()
 
     if not side or not item or not unit:
         return ""
@@ -700,8 +779,19 @@ def deal_note_from_headers():
     if total and not needs_count:
         lines.append(f"- Total price is about {fmt_amount(total)} adena.")
     lines.append("- Always say prices and amounts in short form like 45k or 1.2kk, never the full number like 45000.")
+    # Java's negotiation decision drives what the bot says next: it does not re-decide the price itself.
+    if decision == "ACCEPT" and not needs_count:
+        lines.append(f"- The player asked for {fmt_amount(last_counter)} each and YOU HAVE AGREED to that price. "
+                     "Confirm the deal in a natural, friendly way and ask where they want to meet. Do NOT propose a "
+                     "different number or re-open the price.")
+    elif decision == "REJECT" and not needs_count:
+        lines.append(f"- The player asked for {fmt_amount(last_counter)} each, but that is too low for you. Politely "
+                     f"turn it down and restate your price of {fmt_amount(unit)} each. Do NOT agree to their number "
+                     "and do NOT add a SHOP tag this turn.")
     if needs_count:
         lines.append("- Do NOT add a MEET or SHOP tag until the player tells you how many they want.")
+    elif decision == "REJECT":
+        pass  # holding the line on price - no shop tag until they come up to your price
     else:
         lines.append(f"- If the player agrees price and meeting place, use this exact shop tag: {shop_tag}")
     return "\n".join(lines)
@@ -750,7 +840,7 @@ def chat():
             # The bot is proactively PMing the player about their trade post to set up a real deal.
             player = request.headers.get("X-Player", "someone")
             deal = request.headers.get("X-Deal", "").strip()
-            hist = conversations[(player, fpc)]
+            hist = conversation_for(player, fpc)
             remember_trade_ad(player, message)
             system = whisper_persona(fpc, voice) + loc_note + identity_note() + memory_note(player, ("trade", "social"), k=8) + deal_note
             prompt = (f'{player} just posted in trade chat: "{message}". '
@@ -769,7 +859,7 @@ def chat():
             # fits, append an action tag the Java side parses (assist/free/follow/stay/tp/grace/disband).
             player = request.headers.get("X-Player", "someone")
             role = request.headers.get("X-Role", "party member")
-            hist = conversations[(player, fpc)]
+            hist = conversation_for(player, fpc)
             hist.append({"role": "user", "content": message})
             reply = sanitize(call_llm(party_persona(fpc, role, voice) + loc_note + identity_note() + memory_note(player, ("party", "social"), k=8) + knowledge_note(message),
                 list(hist), 80, temperature))
@@ -793,7 +883,7 @@ def chat():
             buddy_class = request.headers.get("X-Buddy-Class", "").strip()
             buddy_state = request.headers.get("X-Buddy-State", "").strip()
 
-            hist = conversations[(player, fpc)]
+            hist = conversation_for(player, fpc)
             hist.append({"role": "user", "content": message})
 
             note = " You are currently partied with them." if partied else " You are NOT partied with them yet."
@@ -820,7 +910,7 @@ def chat():
             # The buddy spontaneously opens a bit of small talk in party chat (started server-side on a long
             # random timer), so it doesn't feel like a silent bot.
             player = request.headers.get("X-Player", "someone")
-            hist = conversations[(player, fpc)]
+            hist = conversation_for(player, fpc)
             prompt = ("Out of nowhere, start a little casual small talk with your partymate - a quick comment, "
                       "question or banter (the grind, a drop, taking a break, how they're doing, etc). Keep it "
                       "natural and ONE short line. Do not repeat your last lines. Do NOT add any tag.")
@@ -830,7 +920,7 @@ def chat():
                 hist.append({"role": "assistant", "content": reply})
         elif mode == "WHISPER":
             player = request.headers.get("X-Player", "someone")
-            hist = conversations[(player, fpc)]
+            hist = conversation_for(player, fpc)
             hist.append({"role": "user", "content": message})
             recent = "\n".join(trade_log) if trade_log else "(nothing recent)"
             system = (whisper_persona(fpc, voice) + loc_note + identity_note() + memory_note(player, ("trade", "party", "social"), k=8)
@@ -845,7 +935,7 @@ def chat():
             # but a warm, familiar tone - and the friendship is written to memory so every other channel
             # (whisper, party, shout) picks it up too.
             player = request.headers.get("X-Player", "someone")
-            hist = conversations[(player, fpc)]
+            hist = conversation_for(player, fpc)
             hist.append({"role": "user", "content": message})
             remember_fact(player, "social", f"Player is in-game friends with {fpc}.")
             system = (whisper_persona(fpc, voice) + loc_note + identity_note()
@@ -859,7 +949,10 @@ def chat():
             hist.append({"role": "assistant", "content": reply})
             remember_from_exchange(player, message, reply, "FRIEND")
         elif mode == "SAY":
+            # SAY is proximity chat: keep its short-term history local to the bot's area so a conversation in
+            # one town is not fed as context to a bot standing somewhere else.
             speaker = request.headers.get("X-Speaker", "")
+            say_log = say_logs[_say_key(location)]
             overheard = f"{speaker}: {message}" if speaker else message
             if message and overheard not in say_log:
                 say_log.append(overheard)

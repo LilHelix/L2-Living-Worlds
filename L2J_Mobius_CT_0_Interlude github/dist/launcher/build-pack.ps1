@@ -15,9 +15,13 @@
   The resulting zip is what you copy to the clean test VM.
 
   Usage examples (from dist\launcher\):
-    powershell -ExecutionPolicy Bypass -File build-pack.ps1
-    powershell -ExecutionPolicy Bypass -File build-pack.ps1 -SkipBuild
+    powershell -ExecutionPolicy Bypass -File build-pack.ps1 -Version v0.1.12
+    powershell -ExecutionPolicy Bypass -File build-pack.ps1 -Version v0.1.12 -SkipBuild
     powershell -ExecutionPolicy Bypass -File build-pack.ps1 -MariaDbZip C:\dl\mariadb-11.4.5-winx64.zip
+
+  Pass -Version <tag> (the tag you publish, e.g. v0.1.12) so the pack records its
+  version for the in-app update checker. The build still works without it, but the
+  updater will then treat the install as older than any release.
 #>
 
 param(
@@ -26,6 +30,7 @@ param(
     [string]$MariaDbVersion = '11.4.5',                      # used to build the download URL
     [string]$MariaDbUrl = '',                                 # override the download URL entirely
     [string]$OutDir     = '',                                 # where to write the final zip (default: repo root)
+    [string]$Version    = '',                                 # release tag stamped into launcher\version.txt (e.g. v0.1.12)
     [switch]$SkipBuild                                        # reuse an existing build\...zip instead of running ant
 )
 
@@ -142,6 +147,24 @@ foreach ($cfg in @('game\config\Database.ini','login\config\Database.ini')) {
             Set-Content -Path $p -NoNewline
     }
 }
+# Stamp the release version so the in-pack update checker (launcher\update.ps1)
+# knows what this install is and can compare it against the public releases.
+#   - Pass -Version v0.1.15 to stamp a specific tag (overrides whatever is in the tree).
+#   - Otherwise keep the baseline version.txt committed under dist\launcher\ (shipped
+#     in the pack), so a build without -Version still carries a real version.
+#   - Only if neither exists do we fall back to "unknown".
+$versionFile = Join-Path $Pack 'launcher\version.txt'
+if ($Version -ne '') {
+    Set-Content -Path $versionFile -Value $Version -Encoding ASCII -NoNewline
+    Ok "stamped version.txt = $Version"
+} elseif (Test-Path $versionFile) {
+    $existingVersion = (Get-Content -Raw $versionFile).Trim()
+    Ok "using version.txt already in the pack = $existingVersion (pass -Version to override)"
+} else {
+    Set-Content -Path $versionFile -Value 'unknown' -Encoding ASCII -NoNewline
+    Info "no -Version and no baseline version.txt; wrote version.txt = unknown."
+}
+
 # a first-run marker must NOT be present in a shipped pack (empty DB must install)
 Remove-Item -Path (Join-Path $Pack 'launcher\.db_installed') -ErrorAction SilentlyContinue
 # strip the dev-only builder from the shipped pack so players only ever see Start-Server.bat
@@ -189,7 +212,9 @@ if it isn't already present. You just choose how the bots "think":
 
 1. Double-click **setup_brain.bat** in this folder. It installs Python if needed,
    asks whether to use Ollama or DeepSeek, sets everything up, and starts the
-   brain on http://127.0.0.1:5000.
+   brain on http://127.0.0.1:5000. After this first run it is remembered, so
+   double-clicking it again just starts the brain - no more questions. To switch
+   provider later, run **setup_brain.bat --reset**.
 2. To have the launcher start the brain automatically with the server instead,
    set `StartBrain=true` in `launcher\launcher.ini`.
 
@@ -254,8 +279,9 @@ if (Test-Path $manifestPath) {
     $patchRoot = Join-Path $Staging 'patch'
     New-Item -ItemType Directory -Path $patchRoot -Force | Out-Null
 
-    # The freshly built server jar is always part of a patch.
-    $entries = @('libs\GameServer.jar')
+    # The freshly built server jar is always part of a patch, and so is the stamped
+    # version file (so a manual overlay update also bumps the recorded version).
+    $entries = @('libs\GameServer.jar', 'launcher\version.txt')
     foreach ($line in (Get-Content $manifestPath)) {
         $rel = $line.Trim()
         if ($rel -eq '' -or $rel.StartsWith('#')) { continue }
