@@ -27,8 +27,19 @@ $PackRoot    = Split-Path -Parent $DistDir                           # folder ho
 $IniPath     = Join-Path $LauncherDir 'launcher.ini'
 $StartScript = Join-Path $LauncherDir 'launcher.ps1'
 $StopScript  = Join-Path $LauncherDir 'stop.ps1'
+$UpdateScript= Join-Path $LauncherDir 'update.ps1'
 $VersionPath = Join-Path $LauncherDir 'version.txt'
 $L2AdminPath = Join-Path $DistDir 'tools\l2admin\index.html'         # best-effort, may not exist in every pack
+
+# Interactive brain setup lives in the pack at <root>\brain\setup_brain.bat; a raw
+# source checkout keeps setup_brain.bat one level above dist\. Try both.
+function Resolve-BrainSetup {
+    $c = Join-Path $DistDir 'brain\setup_brain.bat'
+    if (Test-Path $c) { return $c }
+    $c = Join-Path $PackRoot 'setup_brain.bat'
+    if (Test-Path $c) { return $c }
+    return $null
+}
 
 # Public repo the update check looks at (read-only preview). Change to taste.
 $UpdateRepo  = 'Teravibes/L2-Living-Worlds'
@@ -88,9 +99,35 @@ $Ports = [ordered]@{
                 FontFamily="Georgia" FontSize="16" Cursor="Hand"/>
       </Grid>
 
-      <!-- Brain toggle -->
-      <CheckBox x:Name="BrainCheck" Grid.Row="3" Content="Start the FPC brain with the server"
-                Foreground="#CFC2B2" FontSize="13" Margin="2,0,0,12"/>
+      <!-- Optional extras: brain + game client -->
+      <StackPanel Grid.Row="3" Margin="0,0,0,12">
+        <!-- Brain toggle + one-time setup -->
+        <Grid Margin="0,0,0,8">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="8"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <CheckBox x:Name="BrainCheck" Grid.Column="0" Content="Start the FPC brain with the server"
+                    Foreground="#CFC2B2" FontSize="13" VerticalAlignment="Center" Margin="2,0,0,0"/>
+          <Button x:Name="BrainSetupButton" Grid.Column="2" Height="30" Content="Set up / configure brain"
+                  Foreground="#CFC2B2" Background="#151515" BorderBrush="#2E2E2E" BorderThickness="1"
+                  FontSize="12" Padding="10,0" Cursor="Hand"/>
+        </Grid>
+        <!-- Game client toggle + path picker -->
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="8"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <CheckBox x:Name="ClientCheck" Grid.Column="0" Content="Launch the game client with the server"
+                    Foreground="#CFC2B2" FontSize="13" VerticalAlignment="Center" Margin="2,0,0,0"/>
+          <Button x:Name="ClientPathButton" Grid.Column="2" Height="30" Content="Set game client..."
+                  Foreground="#CFC2B2" Background="#151515" BorderBrush="#2E2E2E" BorderThickness="1"
+                  FontSize="12" Padding="10,0" Cursor="Hand"/>
+        </Grid>
+      </StackPanel>
 
       <!-- Secondary controls -->
       <Grid Grid.Row="4" Margin="0,0,0,12">
@@ -99,7 +136,7 @@ $Ports = [ordered]@{
           <ColumnDefinition Width="8"/>
           <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
-        <Button x:Name="UpdateButton" Grid.Column="0" Height="34" Content="Check for updates (preview)"
+        <Button x:Name="UpdateButton" Grid.Column="0" Height="34" Content="Check for updates"
                 Foreground="#CFC2B2" Background="#151515" BorderBrush="#2E2E2E" BorderThickness="1"
                 FontSize="12" Cursor="Hand"/>
         <Button x:Name="ConfigButton" Grid.Column="2" Height="34" Content="Open config editor"
@@ -129,6 +166,9 @@ $StatusStack  = $win.FindName('StatusStack')
 $StartButton  = $win.FindName('StartButton')
 $StopButton   = $win.FindName('StopButton')
 $BrainCheck   = $win.FindName('BrainCheck')
+$BrainSetupButton = $win.FindName('BrainSetupButton')
+$ClientCheck  = $win.FindName('ClientCheck')
+$ClientPathButton = $win.FindName('ClientPathButton')
 $UpdateButton = $win.FindName('UpdateButton')
 $ConfigButton = $win.FindName('ConfigButton')
 $LogBox       = $win.FindName('LogBox')
@@ -219,6 +259,14 @@ function Update-Status {
     }
 }
 
+# Re-read launcher\version.txt and reflect it in the subtitle. Called on the same
+# timer as the status lights so that after an update rewrites version.txt, the
+# open panel shows the new version live - no need to close and reopen it.
+function Update-Version {
+    $v = if (Test-Path $VersionPath) { (Get-Content $VersionPath -Raw).Trim() } else { 'unknown' }
+    $SubtitleText.Text = "Control Panel   -   version $v"
+}
+
 function Set-BrainIni([bool]$enabled) {
     if (-not (Test-Path $IniPath)) { return }
     $val   = if ($enabled) { 'true' } else { 'false' }
@@ -229,6 +277,55 @@ function Set-BrainIni([bool]$enabled) {
     }
     if (-not $found) { $out += "StartBrain=$val" }
     Set-Content -Path $IniPath -Value $out -Encoding ASCII
+}
+
+# Set a key under a named section, replacing it in place if present. Creates the
+# key inside the section, or the whole section at the end, if either is missing -
+# needed because an existing tester's launcher.ini predates the [client] section
+# (it is not shipped in patches, so it can be absent on upgraded installs).
+function Set-IniValue([string]$section, [string]$key, [string]$value) {
+    if (-not (Test-Path $IniPath)) { return }
+    $lines = @(Get-Content $IniPath)
+    $out = New-Object System.Collections.Generic.List[string]
+    $inSection   = $false
+    $sectionSeen = $false
+    $written     = $false
+    foreach ($line in $lines) {
+        $trim = $line.Trim()
+        if ($trim -match '^\[(.+)\]$') {
+            if ($inSection -and -not $written) { $out.Add("$key=$value"); $written = $true }
+            $inSection = ($Matches[1] -eq $section)
+            if ($inSection) { $sectionSeen = $true }
+            $out.Add($line)
+            continue
+        }
+        if ($inSection -and ($trim -match ("^\s*" + [regex]::Escape($key) + "\s*="))) {
+            if (-not $written) { $out.Add("$key=$value"); $written = $true }
+            continue   # drop the old line; replaced above
+        }
+        $out.Add($line)
+    }
+    if ($inSection -and -not $written) { $out.Add("$key=$value"); $written = $true }
+    if (-not $sectionSeen) {
+        $out.Add("")
+        $out.Add("[$section]")
+        $out.Add("$key=$value")
+    }
+    Set-Content -Path $IniPath -Value $out -Encoding ASCII
+}
+
+# Read a single key's raw value from the ini (empty string if absent).
+function Get-IniValue([string]$section, [string]$key) {
+    if (-not (Test-Path $IniPath)) { return '' }
+    $cur = ''
+    foreach ($line in (Get-Content $IniPath)) {
+        $trim = $line.Trim()
+        if ($trim -match '^\[(.+)\]$') { $cur = $Matches[1]; continue }
+        if ($cur -eq $section -and ($trim -match ("^\s*" + [regex]::Escape($key) + "\s*=\s*(.*)$"))) {
+            return $Matches[1].Trim()
+        }
+    }
+    return ''
 }
 
 function Start-External([string]$scriptPath, [string[]]$extraArgs = @()) {
@@ -244,8 +341,16 @@ function Start-External([string]$scriptPath, [string[]]$extraArgs = @()) {
 $StartButton.Add_Click({
     if (-not (Test-Path $StartScript)) { Write-Log "ERROR: launcher.ps1 not found next to this panel."; return }
     Set-BrainIni ([bool]$BrainCheck.IsChecked)
-    $withBrain = if ($BrainCheck.IsChecked) { ' (with FPC brain)' } else { '' }
-    Write-Log "Starting server$withBrain ... the DB and server terminals stay hidden."
+    $clientVal = if ($ClientCheck.IsChecked) { 'true' } else { 'false' }
+    Set-IniValue 'client' 'LaunchClient' $clientVal
+    if ($ClientCheck.IsChecked -and (Get-IniValue 'client' 'ClientExe') -eq '') {
+        Write-Log "Note: 'launch client' is ticked but no client path is set - use 'Set game client...' first."
+    }
+    $extras = @()
+    if ($BrainCheck.IsChecked)  { $extras += 'FPC brain' }
+    if ($ClientCheck.IsChecked) { $extras += 'game client' }
+    $withExtras = if ($extras.Count) { " (with $($extras -join ' + '))" } else { '' }
+    Write-Log "Starting server$withExtras ... the DB and server terminals stay hidden."
     Start-External $StartScript @('-Quiet')
 })
 
@@ -264,36 +369,53 @@ $ConfigButton.Add_Click({
     }
 })
 
-$UpdateButton.Add_Click({
-    $UpdateButton.IsEnabled = $false
-    Write-Log "Checking $UpdateRepo for the latest release ..."
-    $local = if (Test-Path $VersionPath) { (Get-Content $VersionPath -Raw).Trim() } else { '(unknown)' }
-    try {
-        $headers = @{ 'User-Agent' = 'L2-Control-Panel'; 'Accept' = 'application/vnd.github+json' }
-        $uri = "https://api.github.com/repos/$UpdateRepo/releases/latest"
-        $resp = Invoke-RestMethod -Uri $uri -Headers $headers -TimeoutSec 15
-        $latest = $resp.tag_name
-        Write-Log "Installed: $local    Latest: $latest"
-        if ($local -eq $latest) {
-            Write-Log "You are up to date."
-        } else {
-            Write-Log "An update is available. (Auto-download comes in the full version.)"
-        }
-    } catch {
-        Write-Log "Update check failed or no releases published yet: $($_.Exception.Message)"
-    } finally {
-        $UpdateButton.IsEnabled = $true
+$BrainSetupButton.Add_Click({
+    $brain = Resolve-BrainSetup
+    if (-not $brain) {
+        Write-Log "Brain setup not found (brain\setup_brain.bat). This pack may have been built without it."
+        return
     }
+    Write-Log "Opening the brain setup in its own window (pick Ollama or DeepSeek) ..."
+    # Its own console so the interactive prompts and the running brain are visible.
+    Start-Process -FilePath 'cmd.exe' -ArgumentList "/k `"$brain`""
+})
+
+$ClientPathButton.Add_Click({
+    $dlg = New-Object Microsoft.Win32.OpenFileDialog
+    $dlg.Title  = 'Select your L2 game client (e.g. system\L2.exe)'
+    $dlg.Filter = 'Programs (*.exe)|*.exe|All files (*.*)|*.*'
+    $current = Get-IniValue 'client' 'ClientExe'
+    if ($current -ne '' -and (Test-Path $current)) {
+        $dlg.InitialDirectory = (Split-Path -Parent $current)
+        $dlg.FileName = (Split-Path -Leaf $current)
+    }
+    if ($dlg.ShowDialog()) {
+        Set-IniValue 'client' 'ClientExe' $dlg.FileName
+        Write-Log "Game client set to: $($dlg.FileName)"
+        if (-not $ClientCheck.IsChecked) {
+            $ClientCheck.IsChecked = $true
+            Write-Log "'Launch the game client with the server' turned on."
+        }
+    }
+})
+
+$UpdateButton.Add_Click({
+    if (-not (Test-Path $UpdateScript)) { Write-Log "ERROR: update.ps1 not found next to this panel."; return }
+    Write-Log "Opening the updater in its own window (it will ask before applying anything) ..."
+    # update.ps1 prompts (Read-Host) and downloads, so give it a real console that
+    # stays open after it finishes. It stops the server itself before overwriting files.
+    $cmd = "& { & '$UpdateScript'; Write-Host ''; Read-Host 'Press Enter to close' }"
+    Start-Process -FilePath 'powershell.exe' `
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $cmd)
 })
 
 # ---- status timer ----------------------------------------------------------
 $timer = New-Object Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromSeconds(5)
-$timer.Add_Tick({ Update-Status })
+$timer.Add_Tick({ Update-Status; Update-Version })
 
 # ---- init ------------------------------------------------------------------
-$installed = if (Test-Path $VersionPath) { (Get-Content $VersionPath -Raw).Trim() } else { 'unknown' }
-$SubtitleText.Text = "Control Panel   -   version $installed"
+Update-Version   # sets the subtitle now; the status timer keeps it current after updates
 $FooterText.Text   = "Prototype - drives launcher.ps1 / stop.ps1. Servers open in their own windows."
 
 # Reflect the current ini brain setting in the checkbox.
@@ -301,6 +423,12 @@ if (Test-Path $IniPath) {
     $brainLine = (Get-Content $IniPath) | Where-Object { $_ -match '^\s*StartBrain\s*=' } | Select-Object -First 1
     if ($brainLine -match '=\s*(true|1|yes|on)\s*$') { $BrainCheck.IsChecked = $true }
 }
+
+# Reflect the current ini game-client settings.
+$clientLaunch = Get-IniValue 'client' 'LaunchClient'
+if (@('true','1','yes','on') -contains $clientLaunch.ToLower()) { $ClientCheck.IsChecked = $true }
+$clientExe = Get-IniValue 'client' 'ClientExe'
+if ($clientExe -ne '') { Write-Log "Game client: $clientExe" }
 
 Write-Log "Control panel ready."
 Update-Status

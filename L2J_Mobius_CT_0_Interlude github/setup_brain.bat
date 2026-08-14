@@ -16,10 +16,26 @@ REM    4. Writes the local .env file with the resolved settings.
 REM    5. Starts fpc_brain.py.
 REM
 REM  Usage:
-REM    setup_brain.bat                                - normal run, asks for provider
+REM    setup_brain.bat                                - if the brain is already set up
+REM                                                      (.env + .venv exist) it starts
+REM                                                      straight away with no provider
+REM                                                      question; otherwise it runs the
+REM                                                      first-time setup (asks O/D).
 REM    setup_brain.bat --reset                        - wipes the saved .env first, so
 REM                                                      everything is asked fresh again
-REM                                                      (including the DeepSeek key)
+REM                                                      (including the DeepSeek key).
+REM                                                      This is how you switch provider.
+REM    setup_brain.bat --auto                         - non-interactive launch used by the
+REM                                                      one-click launcher: if the brain is
+REM                                                      already configured (.env + .venv), it
+REM                                                      just starts fpc_brain.py with no
+REM                                                      prompts and no pauses. If it is NOT
+REM                                                      configured yet, it prints a short
+REM                                                      note and exits WITHOUT blocking the
+REM                                                      server (exit code 2), so a boot with
+REM                                                      StartBrain=true never hangs on a
+REM                                                      prompt. Configure it once by running
+REM                                                      setup_brain.bat with no arguments.
 REM    set OLLAMA_MODEL=llama3.1 & setup_brain.bat     - override the Ollama model
 REM ===========================================================================
 
@@ -37,7 +53,7 @@ REM --- Basic project file checks --------------------------------------------
 if not exist fpc_brain.py (
     echo ERROR: fpc_brain.py not found in this folder.
     echo Put setup_brain.bat in the same folder as fpc_brain.py.
-    pause
+    if /i not "%~1"=="--auto" pause
     exit /b 1
 )
 
@@ -49,11 +65,39 @@ if not exist requirements.txt (
     echo openai
     echo python-dotenv
     echo.
-    pause
+    if /i not "%~1"=="--auto" pause
     exit /b 1
 )
 
-REM --- 0. --reset wipes the saved config so everything is asked fresh -------
+REM --- 0a. --auto: non-interactive launch for the one-click launcher ---------
+REM The launcher calls this when StartBrain=true. It must never prompt or pause,
+REM so a normal server boot cannot hang here. If the brain is already configured
+REM (an .env and a .venv exist), start it straight away. If it is not configured
+REM yet, print a short note and exit with code 2 so the launcher just skips it;
+REM the tester configures it once by double-clicking setup_brain.bat normally.
+
+if /i "%~1"=="--auto" (
+    if not exist .env (
+        echo ==^> Brain not configured yet - skipping auto-start.
+        echo     Run setup_brain.bat once ^(no arguments^) to choose a provider and set it up.
+        exit /b 2
+    )
+    if not exist .venv (
+        echo ==^> Brain Python environment missing - skipping auto-start.
+        echo     Run setup_brain.bat once ^(no arguments^) to build it.
+        exit /b 2
+    )
+    call .venv\Scripts\activate.bat
+    if errorlevel 1 (
+        echo ==^> Could not activate the brain virtualenv - skipping auto-start.
+        exit /b 2
+    )
+    echo ==^> Starting the FPC brain on http://127.0.0.1:5000 ^(auto^) ...
+    python fpc_brain.py
+    exit /b !errorlevel!
+)
+
+REM --- 0b. --reset wipes the saved config so everything is asked fresh -------
 
 if /i "%~1"=="--reset" (
     if exist .env (
@@ -61,6 +105,15 @@ if /i "%~1"=="--reset" (
         del /f /q .env
     )
 )
+
+REM --- 0c. Already set up? Skip the O/D question and go straight to launch ----
+REM If an .env (chosen provider) and a .venv (built Python env) already exist,
+REM the brain was configured on a previous run, so a plain double-click / the
+REM "Set up / configure brain" button starts it immediately - no provider
+REM question. To change provider later, run: setup_brain.bat --reset (that wipes
+REM .env and asks fresh). --reset deletes .env above, so it never skips here.
+
+if exist .env if exist ".venv\Scripts\activate.bat" goto smart_launch
 
 REM --- Load any existing configuration as defaults for the prompts below ----
 
@@ -277,7 +330,13 @@ REM --- 3. Python env + deps ---------------------------------------------------
 REM Make an already-installed Python visible even if PATH wasn't refreshed yet.
 call :ensure_python_on_path
 
-where python >nul 2>&1
+REM Detect a REAL Python. Windows 10/11 ship zero-byte "App execution alias"
+REM stubs named python.exe / python3.exe in %LOCALAPPDATA%\Microsoft\WindowsApps
+REM that only open the Microsoft Store. Plain `where python` finds those stubs -
+REM so it looks installed - but running them just prints "Python was not found"
+REM and fails. Gate on actually running python (and reject the Store alias) so a
+REM machine with only the stub still triggers the auto-install below.
+call :have_real_python
 if errorlevel 1 (
     echo ==^> Python not found. Installing it automatically...
 
@@ -315,10 +374,15 @@ if errorlevel 1 (
     REM affects newly opened shells).
     call :ensure_python_on_path
 
-    where python >nul 2>&1
+    call :have_real_python
     if errorlevel 1 (
         echo ERROR: Python was installed, but it is not visible in this window yet.
         echo Close this Command Prompt, open a new one, and run this BAT again.
+        echo.
+        echo If it keeps failing, the Microsoft Store "App execution alias" for
+        echo Python may be shadowing the real install. Turn it off under Settings
+        echo ^> Apps ^> Advanced app settings ^> App execution aliases ^(switch off
+        echo both python.exe and python3.exe^), then run this BAT again.
         pause
         exit /b 1
     )
@@ -383,6 +447,7 @@ echo ==^> Writing .env...
 
 REM --- 5. Launch ---------------------------------------------------------------
 
+:launch_brain
 echo.
 echo ==^> Starting the FPC brain on http://127.0.0.1:5000 ...
 echo Press CTRL+C to stop it.
@@ -391,11 +456,27 @@ echo.
 python fpc_brain.py
 
 echo.
-echo FPC brain exited with code %errorlevel%.
+echo FPC brain exited with code !errorlevel!.
 pause
 
 endlocal
 goto :eof
+
+REM --- Smart launch: already-configured fast path (from the check near the top).
+REM Activate the existing venv and jump straight to launching, skipping the
+REM provider question and all install steps.
+:smart_launch
+echo.
+echo ==^> Brain already set up - starting it now.
+echo     ^(To change provider, run: setup_brain.bat --reset^)
+call .venv\Scripts\activate.bat
+if errorlevel 1 (
+    echo ERROR: Could not activate the existing Python virtualenv.
+    echo Run: setup_brain.bat --reset   to rebuild it.
+    pause
+    exit /b 1
+)
+goto launch_brain
 
 REM ===========================================================================
 REM  Subroutines
@@ -417,3 +498,23 @@ for %%D in ("%ProgramFiles%\Python313" "%ProgramFiles%\Python312" "%ProgramFiles
     if exist "%%~D\python.exe" set "PATH=%%~D;%%~D\Scripts;!PATH!"
 )
 goto :eof
+
+:have_real_python
+REM Succeeds (errorlevel 0) only when a usable Python is on PATH. Returns 1 when
+REM none is found OR the only match is the Microsoft Store "App execution alias"
+REM stub in WindowsApps (which reports as present via `where` but cannot run).
+set "REALPY="
+for /f "delims=" %%I in ('where python 2^>nul') do (
+    echo %%I | find /i "\WindowsApps\" >nul
+    if errorlevel 1 (
+        if not defined REALPY set "REALPY=%%I"
+    )
+)
+if not defined REALPY exit /b 1
+REM A non-alias python.exe exists on PATH; confirm it actually runs.
+"%REALPY%" --version >nul 2>&1
+if errorlevel 1 exit /b 1
+REM Pin its folder to the front of PATH so every later plain `python` call in
+REM this window resolves to it and never to the WindowsApps Store alias.
+for %%I in ("%REALPY%") do set "PATH=%%~dpI;%%~dpIScripts;!PATH!"
+exit /b 0

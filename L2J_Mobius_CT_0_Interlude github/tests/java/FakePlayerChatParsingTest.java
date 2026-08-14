@@ -51,6 +51,8 @@ public class FakePlayerChatParsingTest
 		testSpokenQuantity();
 		testShopPriceMultiplier();
 		testResolveDealPrice();
+		testParseCounterOffer();
+		testAcceptsCounter();
 		testLfpLevel();
 		testLooksLikeLfp();
 		testLooksLikeTradeAd();
@@ -152,6 +154,47 @@ public class FakePlayerChatParsingTest
 		eq(14000, FakePlayerChatParsing.resolveDealPrice(0, 14000), "no tag price -> offer");
 		eq(500, FakePlayerChatParsing.resolveDealPrice(500, 0), "no offer -> trust tag");
 		eq(0, FakePlayerChatParsing.resolveDealPrice(0, 0), "nothing known -> 0");
+	}
+
+	private static void testParseCounterOffer()
+	{
+		// Bare shorthand numbers ARE the counter in a live haggle (the deal context disambiguates intent).
+		eq(12000, FakePlayerChatParsing.parseCounterOffer("can you do 12k?"), "'can you do 12k' -> 12000");
+		eq(12000, FakePlayerChatParsing.parseCounterOffer("12k?"), "'12k?' -> 12000");
+		eq(10000, FakePlayerChatParsing.parseCounterOffer("make it 10k and deal"), "'make it 10k' -> 10000");
+		eq(2000000, FakePlayerChatParsing.parseCounterOffer("2kk max"), "'2kk' -> 2,000,000");
+		eq(1000000, FakePlayerChatParsing.parseCounterOffer("1m and its yours"), "'1m' -> 1,000,000");
+		// Explicit per-unit price still works (delegates to parseTradeUnitPrice).
+		eq(12000, FakePlayerChatParsing.parseCounterOffer("12k each"), "'12k each' -> 12000");
+		eq(300, FakePlayerChatParsing.parseCounterOffer("@300"), "'@300' -> 300");
+		// A bare number with no suffix and no price cue is a quantity, not a price -> ignored.
+		eq(0, FakePlayerChatParsing.parseCounterOffer("i'll take 5000"), "bare quantity -> no counter");
+		eq(0, FakePlayerChatParsing.parseCounterOffer("give me 200"), "bare number -> no counter");
+		// A message with a quantity then a suffixed price reads the price ("500 ssd, 12k" -> 12000).
+		eq(12000, FakePlayerChatParsing.parseCounterOffer("500 ssd for 12k"), "quantity then 12k -> 12000");
+		// Nothing usable -> 0.
+		eq(0, FakePlayerChatParsing.parseCounterOffer("sounds good"), "no number -> 0");
+		eq(0, FakePlayerChatParsing.parseCounterOffer(null), "null -> 0");
+	}
+
+	private static void testAcceptsCounter()
+	{
+		// Bot SELLING at 14k: a small discount within 15% is accepted; a bigger cut is refused (bot holds price).
+		truth(FakePlayerChatParsing.acceptsCounter(12000, 14000, true), "sell: 12k vs 14k ask -> accept");
+		truth(FakePlayerChatParsing.acceptsCounter(14000, 14000, true), "sell: exact ask -> accept");
+		truth(FakePlayerChatParsing.acceptsCounter(20000, 14000, true), "sell: player offers more -> accept");
+		truth(FakePlayerChatParsing.acceptsCounter(11900, 14000, true), "sell: exactly at 15% floor -> accept");
+		truth(!FakePlayerChatParsing.acceptsCounter(11899, 14000, true), "sell: just below floor -> refuse");
+		truth(!FakePlayerChatParsing.acceptsCounter(8000, 14000, true), "sell: lowball -> refuse");
+		// Bot BUYING at 300: paying a bit more is accepted; paying far more is refused (bot holds).
+		truth(FakePlayerChatParsing.acceptsCounter(330, 300, false), "buy: 330 vs 300 offer -> accept");
+		truth(FakePlayerChatParsing.acceptsCounter(250, 300, false), "buy: player asks less -> accept");
+		truth(FakePlayerChatParsing.acceptsCounter(345, 300, false), "buy: exactly at 15% ceiling -> accept");
+		truth(!FakePlayerChatParsing.acceptsCounter(346, 300, false), "buy: just above ceiling -> refuse");
+		truth(!FakePlayerChatParsing.acceptsCounter(500, 300, false), "buy: overpay -> refuse");
+		// Guards.
+		truth(!FakePlayerChatParsing.acceptsCounter(0, 14000, true), "no counter -> refuse");
+		truth(!FakePlayerChatParsing.acceptsCounter(12000, 0, true), "no anchor -> refuse");
 	}
 
 	private static void testLfpLevel()

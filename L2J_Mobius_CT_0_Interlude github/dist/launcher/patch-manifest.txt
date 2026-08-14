@@ -26,6 +26,12 @@
 game/data/html/admin/rates.htm
 game/data/scripts/handlers/chat/commands/admin/AdminRates.java
 brain/fpc_brain.py
+brain/requirements.txt
+brain/setup_brain.bat
+brain/setup_brain.sh
+Check-Updates.bat
+Configure-Brain.bat
+launcher/update.ps1
 tools/l2admin/index.html
 game/data/PhantomPlaystyles.xml
 game/data/xsd/PhantomPlaystyles.xsd
