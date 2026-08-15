@@ -65,6 +65,7 @@ import org.l2jmobius.gameserver.model.skill.AbnormalType;
 import org.l2jmobius.gameserver.model.skill.BuffInfo;
 import org.l2jmobius.gameserver.model.skill.Skill;
 import org.l2jmobius.gameserver.model.skill.targets.TargetType;
+import org.l2jmobius.gameserver.model.zone.ZoneId;
 import org.l2jmobius.gameserver.network.enums.ChatType;
 import org.l2jmobius.gameserver.network.serverpackets.CreatureSay;
 import org.l2jmobius.gameserver.network.serverpackets.SocialAction;
@@ -106,6 +107,13 @@ public class PhantomPartyManager
 	private static final int MAX_PER_REQUEST = 8; // a full party (minus the leader) from one shout, slots permitting
 	private static final int APPROACH_MIN = 700; // how far out a recruit spawns before walking in (close, so a raid party assembles fast)
 	private static final int APPROACH_MAX = 1300;
+	// Outside a peace zone (open field, dungeon) the long walk-in is fragile: a random far anchor can land in a wall,
+	// off a ledge, or in another room, and a recruit jogging hundreds of units through mob packs aggros them or gets
+	// stuck. There a recruit instead spawns right beside the leader (this offset band), on a geo-validated reachable
+	// tile, and reports in on the spot. The charming walk-in is kept only in peace zones (towns), where it is safe and
+	// other players can see it.
+	private static final int ADJACENT_MIN = 60;
+	private static final int ADJACENT_MAX = 130;
 	private static final long ARRIVE_RANGE = 220; // close enough to the leader to say "here, inv me"
 	private static final long RECRUIT_TIMEOUT = 150000; // give up + despawn if never invited within this window
 	private static final long SPAWN_STAGGER = 500; // small gap so arrivals don't pop on one tile, but a full comp still assembles in a few seconds
@@ -619,16 +627,33 @@ public class PhantomPartyManager
 		return cap - incoming;
 	}
 
-	/** Spawns a member out of sight near the leader and starts it walking over. */
+	/**
+	 * The spot a recruit spawns at. In a peace zone (town) it is a far anchor so the recruit walks in for effect;
+	 * anywhere else it is a short, geo-validated offset right beside the leader, so it never spawns in a wall or a
+	 * neighbouring room and never has to jog through mob packs to reach the party. {@code getValidLocation} clamps the
+	 * offset back onto the leader's own reachable mesh, so the landing tile is always on the same side of any wall.
+	 */
+	private Location recruitSpawnAnchor(Player leader)
+	{
+		final double angle = Rnd.nextDouble() * 2 * Math.PI;
+		if (leader.isInsideZone(ZoneId.PEACE))
+		{
+			final int distance = Rnd.get(APPROACH_MIN, APPROACH_MAX);
+			return new Location(leader.getX() + (int) (Math.cos(angle) * distance), leader.getY() + (int) (Math.sin(angle) * distance), leader.getZ());
+		}
+		final int distance = Rnd.get(ADJACENT_MIN, ADJACENT_MAX);
+		final Location beside = new Location(leader.getX() + (int) (Math.cos(angle) * distance), leader.getY() + (int) (Math.sin(angle) * distance), leader.getZ());
+		return GeoEngine.getInstance().getValidLocation(leader, beside);
+	}
+
+	/** Spawns a member near the leader (walk-in distance in town, right beside them in the field) and starts it moving to its slot. */
 	private void spawnAndApproach(Player leader, PhantomManager.Recruit recruit, int level, boolean rezOnArrival)
 	{
 		if ((leader == null) || !leader.isOnline())
 		{
 			return;
 		}
-		final double angle = Rnd.nextDouble() * 2 * Math.PI;
-		final int distance = Rnd.get(APPROACH_MIN, APPROACH_MAX);
-		final Location anchor = new Location(leader.getX() + (int) (Math.cos(angle) * distance), leader.getY() + (int) (Math.sin(angle) * distance), leader.getZ());
+		final Location anchor = recruitSpawnAnchor(leader);
 		final Player npc = PhantomManager.getInstance().spawnPartyMember(anchor, level, recruit.role, recruit.classId, recruit.race);
 		if (npc == null)
 		{
@@ -1943,9 +1968,9 @@ public class PhantomPartyManager
 				if (owner.isOnline())
 				{
 					speakEvent(state, false, //
-						"You just jogged up to " + owner.getName() + " for their hunting party and you're standing right next to them now. Tell them in one line to invite you to the party.", //
+						"You are standing right next to " + owner.getName() + ", who is looking for a hunting party. Tell them in one line to invite you to the party.", //
 						"here, inv me");
-					emote(state, SOCIAL_GREETING, 300 + Rnd.get(700)); // wave hello as it walks up
+					emote(state, SOCIAL_GREETING, 300 + Rnd.get(700)); // wave hello once beside the leader
 				}
 			}
 		}
@@ -2190,7 +2215,10 @@ public class PhantomPartyManager
 		if (state.assist)
 		{
 			final WorldObject t = owner.getTarget();
-			final boolean haveTarget = (t instanceof Monster) && !((Monster) t).isDead() && (owner.calculateDistance2D(t) <= ASSIST_MAX_RANGE);
+			// Assist only real, legal mob targets. A forbidden target the owner clicked - a fake-player shopkeeper
+			// (attacking it flags the phantom for PvP, the "seller got nuked in town" bug), a treasure box, or a quest
+			// monster - is never assisted, exactly as it is never picked while free-hunting.
+			final boolean haveTarget = (t instanceof Monster) && !((Monster) t).isDead() && !PhantomManager.isPhantomForbiddenTarget((Monster) t) && (owner.calculateDistance2D(t) <= ASSIST_MAX_RANGE);
 
 			// Raid pull control: against a RAID target the party HOLDS until the tank initiates. The tank engages only
 			// when ordered ("tank attack"); once it has the boss's threat the rest of the party is released to assist
@@ -2396,6 +2424,14 @@ public class PhantomPartyManager
 	private boolean engageFocus(Member state, Monster focus)
 	{
 		final Player npc = state.npc;
+		// Never fight inside a peace zone. Mobs don't live in one, so a focus here is a town target (e.g. a fake-player
+		// shopkeeper the owner clicked, or a mob chased to the border); attacking it is both illegal for the player and
+		// the "phantoms nuked a seller in Gludio" bug. Stand down - dropping the target lets the caller rest/hold.
+		if (npc.isInsideZone(ZoneId.PEACE) || focus.isInsideZone(ZoneId.PEACE))
+		{
+			npc.setTarget(null);
+			return false;
+		}
 		// A DPS that ripped raid aggro off the tank holds fire for a beat so the taunt can land (raid-only; no-op on trash).
 		if (isDps(state.role) && easeAggro(state, focus))
 		{
@@ -2570,7 +2606,7 @@ public class PhantomPartyManager
 		// then filter to mobs actually at the camp, so the party never wanders off to a mob the puller didn't bring in.
 		for (Monster mob : World.getInstance().getVisibleObjectsInRange(npc, Monster.class, CAMP_ENGAGE_RANGE + (2 * FORMATION_MAX_DIST)))
 		{
-			if (mob.isDead() || mob.isRaid())
+			if (mob.isDead() || mob.isRaid() || PhantomManager.isPhantomForbiddenTarget(mob))
 			{
 				continue;
 			}
@@ -2751,7 +2787,7 @@ public class PhantomPartyManager
 		double bestD = Double.MAX_VALUE;
 		for (Monster mob : World.getInstance().getVisibleObjectsInRange(npc, Monster.class, PULL_SEARCH_RANGE))
 		{
-			if (mob.isDead() || mob.isRaid() || (mob.getMostHated() == npc))
+			if (mob.isDead() || mob.isRaid() || (mob.getMostHated() == npc) || PhantomManager.isPhantomForbiddenTarget(mob))
 			{
 				continue;
 			}

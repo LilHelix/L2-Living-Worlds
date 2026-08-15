@@ -35,6 +35,7 @@ launcher/update.ps1
 tools/l2admin/index.html
 game/data/PhantomPlaystyles.xml
 game/data/xsd/PhantomPlaystyles.xsd
+game/data/PhantomPopulations.xml
 game/data/BotClans.xml
 game/data/xsd/BotClans.xsd
 game/data/crests
