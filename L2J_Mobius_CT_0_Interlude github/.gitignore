@@ -1,3 +1,7 @@
 /bin/
 .env
 /build/
+
+# Reproducible output of tools/build_populations.py (a per-server tuning artifact,
+# regenerate with the tool; the server loads PhantomPopulations.xml, not this side file).
+/dist/game/data/PhantomPopulations.generated.xml

@@ -332,6 +332,13 @@ public class AutoPlayTaskManager
 			{
 				return false;
 			}
+
+			// Phantoms never pick forbidden targets on their own - fake players (attacking them flags PvP), treasure
+			// boxes and quest monsters (no XP/drops). Real players' auto-play is left unchanged.
+			if (creature.isMonster() && PhantomManager.getInstance().isPhantom(player) && PhantomManager.isPhantomForbiddenTarget(creature.asMonster()))
+			{
+				return false;
+			}
 			
 			switch (mode)
 			{
