@@ -145,7 +145,9 @@ function Find-Java($javaHome) {
 }
 
 # ============================================================================
-Clear-Host
+# Clear-Host throws when there is no real console screen buffer (e.g. when the GUI
+# control panel captures this script's output). Never let that abort startup.
+try { Clear-Host } catch { }
 Write-Host "########################################################" -ForegroundColor Magenta
 Write-Host "#   L2 Offline 'Living World' - One-Click Launcher     #" -ForegroundColor Magenta
 Write-Host "########################################################" -ForegroundColor Magenta

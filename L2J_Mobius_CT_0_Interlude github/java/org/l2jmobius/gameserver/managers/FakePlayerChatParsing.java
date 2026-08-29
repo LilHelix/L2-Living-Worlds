@@ -413,7 +413,11 @@ public final class FakePlayerChatParsing
 		return TRADE_AD.matcher(text).find();
 	}
 
-	/** @return the count number immediately before position {@code pos} in the text (e.g. "2 dd" -> 2), else 1. */
+	/**
+	 * @return the count number immediately before position {@code pos} in the text (e.g. "2 dd" -&gt; 2), else 1.
+	 *         A number that is itself preceded by a level keyword ("lvl 80 pp", "level 80 pp") is that recruit's
+	 *         LEVEL, not how many to spawn, so it is NOT read as a count and this returns 1.
+	 */
 	public static int countBefore(CharSequence text, int pos)
 	{
 		int i = pos - 1;
@@ -421,13 +425,18 @@ public final class FakePlayerChatParsing
 		{
 			i--;
 		}
-		int end = i;
+		final int end = i;
 		while ((i >= 0) && Character.isDigit(text.charAt(i)))
 		{
 			i--;
 		}
 		if (i < end)
 		{
+			// "lvl 80 pp" / "level 80 pp": the number is the requested level, not a count of pp. Don't treat it as one.
+			if (precededByLevelKeyword(text, i))
+			{
+				return 1;
+			}
 			try
 			{
 				return Math.max(1, Math.min(6, Integer.parseInt(text.subSequence(i + 1, end + 1).toString())));
@@ -438,6 +447,33 @@ public final class FakePlayerChatParsing
 			}
 		}
 		return 1;
+	}
+
+	/**
+	 * @param text the full call text
+	 * @param idx the index just before the digit run (the character here is a space or the last letter of the
+	 *            preceding word, or -1 at the start of the text)
+	 * @return {@code true} if the word immediately before the digits (skipping any spaces) is a level keyword
+	 *         ("lvl", "level" or "lv"), which marks the digits as a level rather than a recruit count
+	 */
+	private static boolean precededByLevelKeyword(CharSequence text, int idx)
+	{
+		int i = idx;
+		while ((i >= 0) && (text.charAt(i) == ' '))
+		{
+			i--;
+		}
+		final int wordEnd = i;
+		while ((i >= 0) && Character.isLetter(text.charAt(i)))
+		{
+			i--;
+		}
+		if (i >= wordEnd)
+		{
+			return false; // no letters immediately before the number
+		}
+		final String word = text.subSequence(i + 1, wordEnd + 1).toString().toLowerCase();
+		return word.equals("lvl") || word.equals("level") || word.equals("lv");
 	}
 
 	// Race adjectives a recruiter can put in front of a role ("elf archer", "dark elf tank"). Kept as bare strings

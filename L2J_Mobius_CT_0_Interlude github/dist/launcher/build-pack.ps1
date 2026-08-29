@@ -31,7 +31,8 @@ param(
     [string]$MariaDbUrl = '',                                 # override the download URL entirely
     [string]$OutDir     = '',                                 # where to write the final zip (default: repo root)
     [string]$Version    = '',                                 # release tag stamped into launcher\version.txt (e.g. v0.1.12)
-    [switch]$SkipBuild                                        # reuse an existing build\...zip instead of running ant
+    [switch]$SkipBuild,                                       # reuse an existing build\...zip instead of running ant
+    [switch]$SkipLauncherBuild                                # do not compile LivingWorld.exe (ships script-only)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -256,6 +257,52 @@ if (Test-Path $playstyleValidator) {
     Ok "playstyle validator bundled (python tools\validate_playstyles.py)"
 }
 
+# ---- 6f. compile the one-click launcher (LivingWorld.exe) ------------------
+# The player entry point is a single self-contained exe (no .NET runtime and no
+# PowerShell needed to run it). It is built from dist\launcher-app with the .NET
+# SDK and dropped at the pack root next to Start-Server.bat. The PowerShell
+# scripts remain in the pack as a fallback. Build the exe from the SOURCE tree
+# (dist\launcher-app), not from the expanded pack, and strip that source from the
+# shipped pack so players only get the exe.
+$launcherAppSrc = Join-Path $DistDir 'launcher-app'
+$launcherCsproj = Join-Path $launcherAppSrc 'LivingWorld.csproj'
+if ($SkipLauncherBuild) {
+    Info "-SkipLauncherBuild set - shipping the PowerShell launcher only (no LivingWorld.exe)."
+} elseif (-not (Test-Path $launcherCsproj)) {
+    Info "launcher-app source not found at $launcherCsproj - shipping the PowerShell launcher only."
+} else {
+    $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
+    if (-not $dotnet) {
+        Info "the .NET SDK (dotnet) was not found on PATH - shipping the PowerShell launcher only."
+        Info "install .NET 8 SDK (https://dotnet.microsoft.com/download/dotnet/8.0) to ship LivingWorld.exe."
+    } else {
+        Info "compiling the one-click launcher (dotnet publish) ..."
+        $pubDir = Join-Path $Staging 'launcher-build'
+        # Stamp the exe with the release version so the updater can tell an old
+        # launcher from a current one (via the exe's FileVersion). Fall back to the
+        # pack's version.txt; only pass a numeric version to dotnet.
+        $exeVerRaw = if ($Version -ne '') { $Version } elseif (Test-Path $versionFile) { (Get-Content -Raw $versionFile).Trim() } else { '' }
+        $exeVer = ($exeVerRaw -replace '^[vV]', '')
+        $publishArgs = @($launcherCsproj, '-c', 'Release', '-o', $pubDir)
+        if ($exeVer -match '^\d+(\.\d+){0,3}$') { $publishArgs += "-p:Version=$exeVer" }
+        & dotnet publish @publishArgs | Out-Null
+        $builtExe = Join-Path $pubDir 'LivingWorld.exe'
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $builtExe)) {
+            Die "the launcher build failed (dotnet publish). Fix it, or pass -SkipLauncherBuild to ship the scripts only."
+        }
+        Copy-Item $builtExe -Destination (Join-Path $Pack 'LivingWorld.exe') -Force
+        # Also emit the exe as a standalone artifact next to the zips so it can be
+        # attached to the release as its own asset. update.ps1 (and the compiled
+        # launcher) fetch this when an existing install has an old or missing exe -
+        # it is too large (bundled runtime) to ride the incremental patch.
+        Copy-Item $builtExe -Destination (Join-Path $OutDir 'LivingWorld.exe') -Force
+        Ok "LivingWorld.exe built (pack root + standalone asset in $OutDir)"
+    }
+}
+# The compiled-launcher source and its dev build script are never shipped.
+Remove-Item -Path (Join-Path $Pack 'launcher-app') -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path (Join-Path $Pack 'build-launcher.bat') -Force -ErrorAction SilentlyContinue
+
 # ---- 7. zip it -------------------------------------------------------------
 $outZip = Join-Path $OutDir 'L2J-Offline-OneClick.zip'
 if (Test-Path $outZip) { Remove-Item $outZip -Force }
@@ -336,9 +383,17 @@ alone - any new settings this release adds are called out in the release notes.
 }
 
 Write-Host ""
-Write-Host "Full pack : unzip anywhere and double-click Start-Server.bat (new testers)." -ForegroundColor Green
+if (Test-Path (Join-Path $Pack 'LivingWorld.exe')) {
+    Write-Host "Full pack : unzip anywhere and double-click LivingWorld.exe (new testers)." -ForegroundColor Green
+    Write-Host "            Start-Server.bat / Control-Panel.bat remain as a fallback." -ForegroundColor Green
+} else {
+    Write-Host "Full pack : unzip anywhere and double-click Start-Server.bat (new testers)." -ForegroundColor Green
+}
 if (Test-Path (Join-Path $OutDir 'L2J-Offline-Patch.zip')) {
     Write-Host "Patch zip : existing testers unzip OVER their install to update, keeping their DB." -ForegroundColor Green
+}
+if (Test-Path (Join-Path $OutDir 'LivingWorld.exe')) {
+    Write-Host "Launcher  : attach LivingWorld.exe to the release as an asset; the updater fetches it into existing installs." -ForegroundColor Green
 }
 Write-Host "Cleaning staging..." -ForegroundColor Gray
 Remove-Item -Path $Staging -Recurse -Force -ErrorAction SilentlyContinue

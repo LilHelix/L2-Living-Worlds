@@ -35,6 +35,7 @@ launcher/update.ps1
 tools/l2admin/index.html
 game/data/PhantomPlaystyles.xml
 game/data/xsd/PhantomPlaystyles.xsd
+game/data/PhantomPopulations.xml
 game/data/BotClans.xml
 game/data/xsd/BotClans.xsd
 game/data/crests
@@ -49,3 +50,5 @@ Control-Panel.bat
 launcher/launcher.ps1
 launcher/stop.ps1
 launcher/Control-Panel.ps1
+launcher/assets/background.png
+launcher/assets/launcher.ico

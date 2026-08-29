@@ -42,6 +42,11 @@ jobs:
           }
           ant -version
 
+      - name: Set up .NET SDK 8 (to compile the one-click launcher exe)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
       - name: Build the one-click pack
         shell: pwsh
         run: |
@@ -70,5 +75,16 @@ jobs:
         with:
           name: L2J-Offline-Patch
           path: "L2J_Mobius_CT_0_Interlude github/L2J-Offline-Patch.zip"
+          if-no-files-found: warn
+          retention-days: 30
+
+      # The standalone one-click launcher exe. It also ships inside the pack, but
+      # is uploaded on its own so it can be attached to the release as an asset -
+      # update.ps1 and the compiled launcher fetch it into existing installs.
+      - name: Upload the launcher exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: LivingWorld-launcher
+          path: "L2J_Mobius_CT_0_Interlude github/LivingWorld.exe"
           if-no-files-found: warn
           retention-days: 30
