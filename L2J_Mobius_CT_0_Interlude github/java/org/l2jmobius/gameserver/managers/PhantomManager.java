@@ -85,6 +85,7 @@ import org.l2jmobius.gameserver.model.item.type.ArmorType;
 import org.l2jmobius.gameserver.model.item.type.CrystalType;
 import org.l2jmobius.gameserver.model.item.type.EtcItemType;
 import org.l2jmobius.gameserver.model.item.type.WeaponType;
+import org.l2jmobius.gameserver.model.skill.AbnormalType;
 import org.l2jmobius.gameserver.model.skill.Skill;
 import org.l2jmobius.gameserver.model.skill.targets.TargetType;
 import org.l2jmobius.gameserver.network.GameClient;
@@ -142,6 +143,14 @@ public class PhantomManager implements IXmlReader
 	// AutoPlay auto-action id for the basic melee attack. Without it, AutoPlay treats the character as a
 	// mage caster that never auto-hits (see AutoPlayTaskManager.isMageCaster).
 	private static final int AUTO_ATTACK_ACTION = 2;
+	// Emergency / panic self-buffs a phantom must NOT auto-maintain as ordinary buff upkeep. These are
+	// situational, long-cooldown "panic buttons": several root or immobilize the caster (Ultimate Defense and
+	// the barriers apply an ImmobileBuff), some can only be cast at low HP (Guts/Frenzy = PINCH), and all waste a
+	// multi-minute reuse if popped on trash at full HP - which is how a tank ended up standing frozen out of
+	// combat with Ultimate Defense running. They belong to the manager survival layer and the playstyle PANIC
+	// entries, which fire them only when actually needed. Matched by abnormal type so no per-skill id list is
+	// needed; offensive damage steroids (Snipe/Rapid Fire/Dead Eye, War Cry, Rage, ...) are deliberately kept.
+	private static final Set<AbnormalType> PANIC_SELF_BUFFS = EnumSet.of(AbnormalType.PD_UP_SPECIAL, AbnormalType.AVOID_UP_SPECIAL, AbnormalType.INVINCIBILITY, AbnormalType.ULTIMATE_BUFF, AbnormalType.HERO_BUFF, AbnormalType.PINCH, AbnormalType.RESURRECTION_SPECIAL, AbnormalType.MIRAGE, AbnormalType.AVOID_SKILL, AbnormalType.COUNTER_SKILL, AbnormalType.FORCE_MEDITATION);
 	// Own-MP floor for a field hunter driving its class playstyle: below this percent the engine skips
 	// spending skills (PANIC/LIMIT survival casts are exempt) so a hunter keeps enough MP to auto-attack
 	// instead of going fully OOM. Recruited members use their own per-role reserve in PhantomPartyManager.
@@ -1908,6 +1917,15 @@ public class PhantomManager implements IXmlReader
 	 */
 	private Player createAndSpawn(Location location, int level, Population population)
 	{
+		return createAndSpawn(location, level, population, 0);
+	}
+
+	/**
+	 * @param forcedClassId when greater than 0 (and this is not a buddy/regular spawn), pins the phantom to this
+	 *            exact class instead of rolling one - used by the admin spawn command for targeted class testing.
+	 */
+	private Player createAndSpawn(Location location, int level, Population population, int forcedClassId)
+	{
 		if (_phantoms.size() >= MAX_PHANTOMS)
 		{
 			return null; // safety ceiling reached
@@ -1940,6 +1958,13 @@ public class PhantomManager implements IXmlReader
 			else if ((regular != null) && (regular.classId > 0))
 			{
 				classId = regular.classId;
+				mage = isMageClass(classId);
+			}
+			else if (forcedClassId > 0)
+			{
+				// Admin-pinned class for targeted testing (e.g. spawn a Sword Singer). transferClass is idempotent
+				// per tier, so a phantom created already at its target class stays that class at a matching level.
+				classId = forcedClassId;
 				mage = isMageClass(classId);
 			}
 			else
@@ -2119,11 +2144,24 @@ public class PhantomManager implements IXmlReader
 	 */
 	public Player spawnPhantom(Location location, int level)
 	{
+		return spawnPhantom(location, level, 0);
+	}
+
+	/**
+	 * Spawns a single ad-hoc phantom, optionally pinned to a specific class instead of the random roll - for
+	 * targeted testing (for example a Sword Singer hunter). {@code classId} 0 keeps the normal random pick.
+	 * @param location where to spawn
+	 * @param level the level to bring it to
+	 * @param classId the exact {@link PlayerClass} id to spawn, or 0 to roll a random class
+	 * @return the spawned phantom, or {@code null} on failure
+	 */
+	public Player spawnPhantom(Location location, int level, int classId)
+	{
 		if (!AutoPlayConfig.ENABLE_AUTO_PLAY)
 		{
 			LOGGER.warning(getClass().getSimpleName() + ": EnableAutoPlay is false in config/Custom/AutoPlay.ini - phantoms will spawn but not hunt.");
 		}
-		return createAndSpawn(location, level, null);
+		return createAndSpawn(location, level, null, classId);
 	}
 
 	/**
@@ -2168,7 +2206,13 @@ public class PhantomManager implements IXmlReader
 		// chained skills resolve.
 		transferClass(phantom, level, mage);
 		learnAllSkills(phantom);
-		gear(phantom, level, mage);
+		// Class-aware loadout via the same role-driven path recruited members and friends use, so a field hunter
+		// carries its real class weapon (dagger for a dagger class, dual swords for a Dancer, bow for an archer,
+		// fist for a monk, ...) instead of the old sword-for-every-fighter ambient pick. This matters now that field
+		// hunters run their class playstyles: several class skills hard-require a specific weapon (dances need
+		// equipped dual swords, dagger skills need a dagger), so the wrong weapon silently blocked those casts.
+		buildGear();
+		gearParty(phantom, level, mage, roleForClass(phantom.getPlayerClass()));
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
 		registerAutoSkills(phantom);
@@ -3160,6 +3204,13 @@ public class PhantomManager implements IXmlReader
 			// Self-buffs: lasting, beneficial, cast on self.
 			if (skill.isContinuous() && !skill.isDebuff() && (skill.getEffectPoint() >= 0) && (skill.getTargetType() == TargetType.SELF))
 			{
+				// ...except emergency/panic self-buttons (Ultimate Defense and friends), which must not be kept up as
+				// plain buff upkeep - see PANIC_SELF_BUFFS. The manager survival layer / playstyle PANIC entries fire
+				// those when they are actually needed.
+				if (PANIC_SELF_BUFFS.contains(skill.getAbnormalType()))
+				{
+					continue;
+				}
 				autoUse.getAutoBuffs().add(skill.getId());
 			}
 			// Offensive actives: instant (non-continuous) harmful skills used on the target.

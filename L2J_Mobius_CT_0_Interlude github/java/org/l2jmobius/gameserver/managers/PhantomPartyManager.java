@@ -3650,10 +3650,10 @@ public class PhantomPartyManager
 	private static void restoreAutoSkills(Member state)
 	{
 		final Player npc = state.npc;
-		if ((state.role == PartyRole.TANK) && (npc.getKnownSkill(UD_SKILL_ID) != null) && !npc.getAutoUseSettings().getAutoBuffs().contains(UD_SKILL_ID))
-		{
-			npc.getAutoUseSettings().getAutoBuffs().add(UD_SKILL_ID);
-		}
+		// Ultimate Defense is intentionally NOT restored to the auto-buff list. It is a panic button that roots the
+		// caster and sits on a 30-minute reuse, so auto-maintaining it froze an ambient phantom out of combat -
+		// registerAutoSkills now excludes it (and every emergency self-buff) from the ambient loadout as well, so a
+		// released friend resumes ambient life without it. In party it stays hand-cast at low HP by maybeSurvival.
 		if (state.parkedAutoSkills != null)
 		{
 			for (Integer id : state.parkedAutoSkills)

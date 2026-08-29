@@ -103,6 +103,54 @@ if ($latestBase -eq '0') { Die "No usable release tags found at $UpdateRepo." }
 $latestTag = "v$latestBase"
 Info "Latest version:    $latestTag"
 
+# ---- ensure the one-click launcher exe -------------------------------------
+# LivingWorld.exe is the compiled launcher. It is too large (bundled runtime) to
+# ride the incremental patch, so it ships as its own release asset and is fetched
+# here when an existing install is missing it or has an older copy. This is
+# independent of the server version below: a tester whose server is current but
+# who has never had the exe still gets it. Compares the local exe's FileVersion
+# to the latest release.
+function Get-ExeBaseVersion($exePath) {
+    if (-not (Test-Path $exePath)) { return '' }
+    try {
+        $fv = (Get-Item $exePath).VersionInfo.FileVersion
+        return Get-BaseVersion "$fv"
+    } catch { return '' }
+}
+
+function Ensure-LauncherExe($releases, $latestTag, $latestBase) {
+    $exePath = Join-Path $InstallRoot 'LivingWorld.exe'
+    $localBase = Get-ExeBaseVersion $exePath
+    $need = (-not (Test-Path $exePath)) -or ($localBase -eq '') -or ((Compare-BaseVersion $localBase $latestBase) -lt 0)
+    if (-not $need) { Info "Launcher (LivingWorld.exe) is current."; return }
+
+    $rel = @($releases) | Where-Object { $_.tag_name -eq $latestTag } | Select-Object -First 1
+    if (-not $rel) { Info "No $latestTag release found for the launcher exe; it will arrive with the next full pack."; return }
+    $asset = @($rel.assets) | Where-Object { $_.name -ieq 'LivingWorld.exe' } | Select-Object -First 1
+    if (-not $asset) { Info "No LivingWorld.exe asset on $latestTag; the launcher will arrive with the next full pack."; return }
+
+    if ($CheckOnly) { Info "A newer one-click launcher (LivingWorld.exe) is available; run the updater to fetch it."; return }
+
+    Info "Downloading the one-click launcher (LivingWorld.exe) ..."
+    $tmpExe = Join-Path $env:TEMP ("LivingWorld_" + [DateTime]::Now.ToString('yyyyMMdd_HHmmss') + '.exe')
+    try {
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tmpExe -UseBasicParsing -TimeoutSec 300
+    } catch {
+        Warn "Could not download the launcher exe: $($_.Exception.Message). Start-Server.bat still works."
+        return
+    }
+    try {
+        Copy-Item $tmpExe -Destination $exePath -Force
+        Ok "One-click launcher ready: double-click LivingWorld.exe (Start-Server.bat still works too)."
+    } catch {
+        Warn "Downloaded the launcher but could not replace $exePath (close it if it is open, then retry). Start-Server.bat still works."
+    } finally {
+        Remove-Item $tmpExe -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Ensure-LauncherExe $releases $latestTag $latestBase
+
 # ---- up to date? -----------------------------------------------------------
 $cmp = Compare-BaseVersion $installedBase $latestBase
 if ($cmp -ge 0) {

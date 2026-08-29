@@ -259,6 +259,12 @@ public class FakePlayerChatParsingTest
 		eq(6, FakePlayerChatParsing.countBefore("10 tanks", 3), "10 clamps to the 6 cap");
 		eq(1, FakePlayerChatParsing.countBefore("0 dd", 2), "0 clamps up to 1");
 		eq(3, FakePlayerChatParsing.countBefore("3   dd", 4), "extra spaces between count and word -> 3");
+		// A number preceded by a level keyword is a LEVEL, not a count: "1 lvl 80 pp" must recruit 1 pp, not 80.
+		eq(1, FakePlayerChatParsing.countBefore("1 lvl 80 pp", 9), "'lvl 80 pp' -> level, not a count");
+		eq(1, FakePlayerChatParsing.countBefore("lfm level 80 pp", 13), "'level 80 pp' -> level, not a count");
+		eq(1, FakePlayerChatParsing.countBefore("lf lv 76 se", 9), "'lv 76 se' -> level, not a count");
+		// A genuine count right before the word is still read (no level keyword in front of it).
+		eq(2, FakePlayerChatParsing.countBefore("lfm 2 pp", 6), "'2 pp' with no level keyword -> 2");
 	}
 
 	private static void testParseRoleRequests()

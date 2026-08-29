@@ -51,7 +51,6 @@ In phantom mode, a population's **role** dropdown turns it into a personal **sup
 | **Idle / loiter** | Bots drift randomly within radius or drawn zone |
 | **Runner** | Bots visit route waypoints in random order |
 | **Patrol** | Bots walk route waypoints in order, looping |
-| **Farm** | Bots seek and fight monsters in zone. Tick **respawn**. |
 | **Shop** | Seated private-store vendors (SELL/BUY/CRAFT/PACKAGE) |
 
 For **Shop** populations, the population's **level range** sets the tier of stock (gear *and* consumables), so a low-level town sells its own grade of shots/mats. Tick **market hub - stock every grade (ignore level)** to make it a hub (e.g. Giran) that carries everything regardless of level.
@@ -112,7 +111,6 @@ Check **edit images (drag / resize)** to reposition layers. Image placements are
 |---|---|
 | Blue | Idle / loiter |
 | Purple | Runner / Patrol (routes drawn dashed) |
-| Red | Farm (field hunters) |
 | Gold | Shop vendors |
 | Teal | Phantoms |
 | Orange | Currently selected population's route |

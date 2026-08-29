@@ -231,7 +231,6 @@
 					<option value="IDLE">Idle / loiter — drift in an area</option>
 					<option value="RUNNER">Runner — roam a route (random)</option>
 					<option value="PATROL">Patrol — walk a route in order</option>
-					<option value="FARM">Farm — hunt monsters in an area</option>
 					<option value="SHOP">Shop — private-store vendors</option>
 				</select>
 				<div id="storeRow">
@@ -552,21 +551,18 @@ const LANDMARKS = [
 //   IDLE   -> WANDER  (drift within radius / drawn area)   blue
 //   RUNNER -> VISIT   (route, next waypoint chosen at random) purple
 //   PATROL -> PATROL  (route, walked in order)               purple
-//   FARM   -> FARM    (hunt monsters within radius)          red
 //   SHOP   -> WANDER  (private-store vendors, small drift)   gold
-const BEHAVIORS = ['IDLE','RUNNER','PATROL','FARM','SHOP'];
+const BEHAVIORS = ['IDLE','RUNNER','PATROL','SHOP'];
 const BEHAVIOR_DEFAULTS = {
 	IDLE:   { type: 'WANDER', run: false, pauseMin: 25, pauseMax: 80, roam: 'pop'  },
 	SHOP:   { type: 'WANDER', run: false, pauseMin: 25, pauseMax: 80, roam: 120    },
 	RUNNER: { type: 'VISIT',  run: false, pauseMin: 25, pauseMax: 70, roam: null   },
-	PATROL: { type: 'PATROL', run: false, pauseMin: 10, pauseMax: 30, roam: null   },
-	FARM:   { type: 'FARM',   run: true,  pauseMin: 2,  pauseMax: 6,  roam: 'pop'  }
+	PATROL: { type: 'PATROL', run: false, pauseMin: 10, pauseMax: 30, roam: null   }
 };
 const BEHAVIOR_HELP = {
 	IDLE:   'Bots drift around at random within the radius (or the drawn zone) — the standing-around-town crowd.',
 	RUNNER: 'Bots roam between the route waypoints you place, picking the next one at RANDOM. Use "Draw route".',
 	PATROL: 'Bots walk the route waypoints IN ORDER and loop, like guards or travellers. Use "Draw route".',
-	FARM:   'Bots seek out and fight monsters within the radius (field hunters).',
 	SHOP:   'Bots open private stores. Pick a store type; they barely move around the spawn.'
 };
 function isRouteBehavior(b){ return b === 'RUNNER' || b === 'PATROL'; }
@@ -580,7 +576,6 @@ function behaviorFromProfile(prof, store){
 	switch (prof.type){
 		case 'VISIT':  return 'RUNNER';
 		case 'PATROL': return 'PATROL';
-		case 'FARM':   return 'FARM';
 		default:       return 'IDLE';
 	}
 }
@@ -588,7 +583,6 @@ function popColor(p){
 	if (mode === 'phantom') return '#46c6c0';
 	switch (p.behavior){
 		case 'SHOP':   return '#e8c24a';
-		case 'FARM':   return '#e0563b';
 		case 'RUNNER':
 		case 'PATROL': return '#c06ee0';
 		default:       return '#4a8de8'; // IDLE
@@ -1767,7 +1761,7 @@ function buildXml(){
 		let a = `name="${esc(name)}" type="${d.type}"`;
 		const route = isRouteBehavior(p.behavior);
 		if (!route){
-			// WANDER/FARM roam distance: the population's own radius for IDLE/FARM, a small fixed drift for SHOP.
+			// WANDER roam distance: the population's own radius for IDLE, a small fixed drift for SHOP.
 			const hasPoly = p.poly && p.poly.length >= 3;
 			const roam = (d.roam === 'pop') ? (hasPoly ? polyRadius(p.poly, polyCentroid(p.poly)) : p.radius) : d.roam;
 			if (roam != null) a += ` radius="${roam}"`;

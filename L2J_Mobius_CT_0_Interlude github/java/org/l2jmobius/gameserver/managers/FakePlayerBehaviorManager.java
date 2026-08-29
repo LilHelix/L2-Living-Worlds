@@ -51,7 +51,6 @@ import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerAppearance;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerCraftItem;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerStoreItem;
 import org.l2jmobius.gameserver.model.actor.instance.Merchant;
-import org.l2jmobius.gameserver.model.actor.instance.Monster;
 import org.l2jmobius.gameserver.model.actor.instance.Teleporter;
 import org.l2jmobius.gameserver.model.actor.instance.Warehouse;
 import org.l2jmobius.gameserver.model.spawns.Spawn;
@@ -129,10 +128,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		PATROL,
 		/** Moves to a RANDOM point from the list each time (with long idles): "purposeful" town movement
 		 * between points of interest like the gatekeeper, warehouse and shops. */
-		VISIT,
-		/** Hunts: heads toward the nearest monster in the zone; if none is near, roams elsewhere within
-		 * the zone to find some. Spreads bots out across a hunting ground instead of clustering. */
-		FARM
+		VISIT
 	}
 
 	private enum Phase
@@ -250,7 +246,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				final StatSet set = new StatSet(parseAttributes(profileNode));
 				final Profile profile = new Profile();
 				profile.name = set.getString("name");
-				profile.type = Enum.valueOf(ProfileType.class, set.getString("type", "WANDER").toUpperCase());
+				profile.type = parseProfileType(set.getString("type", "WANDER"), profile.name);
 				profile.radius = set.getInt("radius", 600);
 				profile.run = set.getBoolean("run", false);
 				profile.pauseMin = set.getInt("pauseMin", 8);
@@ -665,34 +661,25 @@ public class FakePlayerBehaviorManager implements IXmlReader
 	}
 
 	/**
-	 * Finds the closest living monster within range that is still inside the bot's zone.
-	 * @param npc the hunting bot
-	 * @param state its behavior state (for the zone anchor/radius)
-	 * @param range how far to look
-	 * @return the nearest in-zone monster, or {@code null} if none
+	 * Resolves a profile type name to its enum, tolerating a value that is no longer supported. The retired
+	 * FARM ("field fake player") type is the main case: field phantoms cover that role far better, so a fake
+	 * player is never allowed to hunt the field. An unknown or retired type quietly falls back to WANDER (a
+	 * harmless idle drift) with a warning, rather than throwing and failing the whole file load.
+	 * @param raw the type attribute as written in the XML
+	 * @param profileName the owning profile name, for the warning message
+	 * @return the resolved type, or {@link ProfileType#WANDER} when the value is not recognised
 	 */
-	private Monster nearestMonster(Npc npc, BotState state, int range)
+	private ProfileType parseProfileType(String raw, String profileName)
 	{
-		final List<Monster> found = new ArrayList<>();
-		World.getInstance().forEachVisibleObjectInRange(npc, Monster.class, range, monster ->
+		try
 		{
-			if (!monster.isDead() && monster.isInsideRadius2D(state.home, state.radius + 400))
-			{
-				found.add(monster);
-			}
-		});
-		Monster nearest = null;
-		double best = Double.MAX_VALUE;
-		for (Monster monster : found)
-		{
-			final double distance = npc.calculateDistance2D(monster);
-			if (distance < best)
-			{
-				best = distance;
-				nearest = monster;
-			}
+			return Enum.valueOf(ProfileType.class, raw.toUpperCase());
 		}
-		return nearest;
+		catch (IllegalArgumentException e)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": Profile '" + profileName + "' uses unsupported type '" + raw + "'; falling back to WANDER.");
+			return ProfileType.WANDER;
+		}
 	}
 
 	private Profile resolveProfile(Npc npc)
@@ -925,7 +912,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			// Arrived (or recovered). Decide how long to pause here before the next goal:
 			// - an explicit per-waypoint delay always wins (0 = no stop);
 			// - PATROL otherwise defaults to 0 so guards walk their loop continuously;
-			// - VISIT/WANDER/FARM otherwise use the profile's loiter pause (pauseMin..pauseMax).
+			// - VISIT/WANDER otherwise use the profile's loiter pause (pauseMin..pauseMax).
 			state.phase = Phase.IDLE;
 			state.moveTarget = null;
 			state.moveAttempts = 0;
@@ -1015,18 +1002,6 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			}
 			// As above: give the engine the real point and let it pathfind, no straight-line pre-clamp.
 			return profile.points.get(idx);
-		}
-
-		if (profile.type == ProfileType.FARM)
-		{
-			// Head toward the nearest live monster inside the zone; if there is none, fall through to a
-			// roam so the bot relocates and looks for mobs elsewhere within the zone.
-			final int searchRange = Math.min(2200, Math.max(800, state.radius));
-			final Monster target = nearestMonster(npc, state, searchRange);
-			if (target != null)
-			{
-				return GeoEngine.getInstance().getValidLocation(npc, new Location(target.getX(), target.getY(), target.getZ()));
-			}
 		}
 
 		// WANDER: random reachable point within the bot's radius of the home anchor.

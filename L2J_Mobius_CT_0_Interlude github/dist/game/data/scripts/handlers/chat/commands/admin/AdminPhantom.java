@@ -33,8 +33,9 @@ import org.l2jmobius.gameserver.model.actor.Player;
  * Admin control for the real-Player phantom slice.<br>
  * Usage:
  * <ul>
- * <li>{@code //phantom spawn [count] [level]} - spawn N clientless phantom fighters at your position
- * (default 1) brought to the given level (default 1).</li>
+ * <li>{@code //phantom spawn [count] [level] [classId]} - spawn N clientless phantoms at your position
+ * (default 1) brought to the given level (default 1). Optional {@code classId} pins the exact class instead
+ * of the random roll (e.g. 21 = Sword Singer, 100 = Sword Muse), for targeted class testing.</li>
  * <li>{@code //phantom reload} - re-read PhantomPopulations.xml live (populations + editor-authored
  * {@code <friend>} orders): everything despawns, zones redeploy on approach, friends rejoin in ~15s.</li>
  * <li>{@code //phantom clear} - despawn all phantoms.</li>
@@ -71,7 +72,7 @@ public class AdminPhantom implements IAdminCommandHandler
 		}
 		if (words.length < 2)
 		{
-			activeChar.sendSysMessage("Usage: //phantom spawn [count] [level] | reload | clear | count | debug [on|off] | playstyle [check]");
+			activeChar.sendSysMessage("Usage: //phantom spawn [count] [level] [classId] | reload | clear | count | debug [on|off] | playstyle [check]");
 			return false;
 		}
 
@@ -107,17 +108,33 @@ public class AdminPhantom implements IAdminCommandHandler
 					}
 				}
 
+				// Optional 4th arg: pin the exact class id (e.g. 21 = Sword Singer, 100 = Sword Muse) instead of
+				// rolling a random class - for targeted class testing. 0/absent keeps the normal random pick.
+				int classId = 0;
+				if (words.length > 4)
+				{
+					try
+					{
+						classId = Math.max(0, Integer.parseInt(words[4]));
+					}
+					catch (NumberFormatException e)
+					{
+						activeChar.sendSysMessage("Class id must be a number (e.g. 21 = Sword Singer).");
+						return false;
+					}
+				}
+
 				int spawned = 0;
 				for (int i = 0; i < count; i++)
 				{
 					// Scatter slightly around the admin so they do not stack on one tile.
 					final Location location = new Location(activeChar.getX() + ((i % 5) * 40), activeChar.getY() + ((i / 5) * 40), activeChar.getZ());
-					if (PhantomManager.getInstance().spawnPhantom(location, level) != null)
+					if (PhantomManager.getInstance().spawnPhantom(location, level, classId) != null)
 					{
 						spawned++;
 					}
 				}
-				activeChar.sendSysMessage("Spawned " + spawned + "/" + count + " phantom(s) at level " + level + ". Active: " + PhantomManager.getInstance().getCount());
+				activeChar.sendSysMessage("Spawned " + spawned + "/" + count + " phantom(s) at level " + level + (classId > 0 ? " class " + classId : "") + ". Active: " + PhantomManager.getInstance().getCount());
 				break;
 			}
 			case "reload":
@@ -177,7 +194,7 @@ public class AdminPhantom implements IAdminCommandHandler
 			}
 			default:
 			{
-				activeChar.sendSysMessage("Usage: //phantom spawn [count] [level] | reload | clear | count | debug [on|off] | playstyle [check]");
+				activeChar.sendSysMessage("Usage: //phantom spawn [count] [level] [classId] | reload | clear | count | debug [on|off] | playstyle [check]");
 				return false;
 			}
 		}
