@@ -72,6 +72,7 @@ import org.l2jmobius.gameserver.model.skill.AbnormalType;
 import org.l2jmobius.gameserver.model.skill.BuffInfo;
 import org.l2jmobius.gameserver.model.skill.Skill;
 import org.l2jmobius.gameserver.model.skill.targets.TargetType;
+import org.l2jmobius.gameserver.model.zone.ZoneId;
 import org.l2jmobius.gameserver.network.enums.ChatType;
 import org.l2jmobius.gameserver.network.serverpackets.CreatureSay;
 import org.l2jmobius.gameserver.network.serverpackets.SocialAction;
@@ -98,9 +99,10 @@ public class PhantomPartyManager
 	 * Raid combat trace. When on, the manager logs (to the gameserver log) a periodic snapshot of every party with a
 	 * raid boss engaged - boss HP and who it's hating, plus each member's role/HP/MP/action - and event lines for
 	 * taunts, heals, res and deaths. Raid-only, so it's silent during normal farming. Toggle live with
-	 * {@code //phantom debug on|off}. Defaults on so the first pull after a rebuild is already traced.
+	 * {@code //phantom debug on|off} (or the {@code //debug_on} / {@code //debug_off} shortcuts). Defaults off;
+	 * turn it on for a raid session when a trace is needed, so a normal live server does not carry the log cost.
 	 */
-	public static volatile boolean DEBUG = true;
+	public static volatile boolean DEBUG = false;
 	private static final long RAID_LOG_INTERVAL = 1500; // throttle for the periodic snapshot
 	private long _lastRaidLog;
 
@@ -112,6 +114,13 @@ public class PhantomPartyManager
 	private static final int MAX_PER_REQUEST = 8; // a full party (minus the leader) from one shout, slots permitting
 	private static final int APPROACH_MIN = 700; // how far out a recruit spawns before walking in (close, so a raid party assembles fast)
 	private static final int APPROACH_MAX = 1300;
+	// Outside a peace zone (open field, dungeon) the long walk-in is fragile: a random far anchor can land in a wall,
+	// off a ledge, or in another room, and a recruit jogging hundreds of units through mob packs aggros them or gets
+	// stuck. There a recruit instead spawns right beside the leader (this offset band), on a geo-validated reachable
+	// tile, and reports in on the spot. The charming walk-in is kept only in peace zones (towns), where it is safe and
+	// other players can see it.
+	private static final int ADJACENT_MIN = 60;
+	private static final int ADJACENT_MAX = 130;
 	private static final long ARRIVE_RANGE = 220; // close enough to the leader to say "here, inv me"
 	private static final long RECRUIT_TIMEOUT = 150000; // give up + despawn if never invited within this window
 	private static final long SPAWN_STAGGER = 500; // small gap so arrivals don't pop on one tile, but a full comp still assembles in a few seconds
@@ -146,6 +155,8 @@ public class PhantomPartyManager
 	private static final int RAID_BACKLINE_RANGE = 720; // raid ranged/support lane: far enough to avoid melee AoE, close enough for heals
 	private static final int RAID_BACKLINE_TOLERANCE = 140;
 	private static final int RAID_SPREAD_STEP = 140;
+	private static final int LOS_STEP = 150; // when a backline stand point can't see the boss, pull it this much closer and retry
+	private static final int LOS_STEP_MIN = 200; // closest a ranged member is pulled in to regain line of sight (still outside melee)
 	// Archers must hold INSIDE bow reach (the generic 720 backline is past a bow's ~500 range, so they could never fire
 	// from it - the big ranged DPS bug). Hold range is derived from the bow's actual reach; the spread is tighter than
 	// the caster lane so the outer lanes (radial + lateral) still land within reach.
@@ -499,6 +510,8 @@ public class PhantomPartyManager
 		long peelMoveAt; // ...and when it last stepped away from it, so kite moves aren't re-issued every tick
 		Skill peelControl; // lazy: the control skill it peels with (Stunning Shot / Sleep / Root ...)
 		boolean peelControlLookedUp;
+		String raidGateReason; // DEBUG: the reason code the raid engage gate (mayAttackRaid) last recorded for this member
+		String raidGateLogged; // DEBUG: the reason last written to the log, so a steady state is logged once, not every tick
 
 		Member(Player npc, PartyRole role)
 		{
@@ -512,11 +525,6 @@ public class PhantomPartyManager
 		boolean isSupport()
 		{
 			return role.isSupport();
-		}
-
-		void cleanup()
-		{
-			lootingSessionItems = null;
 		}
 
         public void addItemsToLootingSession(Item item)
@@ -599,6 +607,9 @@ public class PhantomPartyManager
 	// ownerId -> first tick a raid check found no living tank. Cleared once a tank exists again or the raid
 	// gate resets (clearRaidRelease); see NO_TANK_FAILOPEN_MS.
 	private final ConcurrentHashMap<Integer, Long> _noTankSince = new ConcurrentHashMap<>();
+	// DEBUG only: ownerIds whose current raid engagement has already printed its one-time "ENGAGE START" banner, so a
+	// fresh pull banners once instead of every snapshot. Pruned when the party is no longer engaged with a raid.
+	private final Set<Integer> _raidTraceBannered = ConcurrentHashMap.newKeySet();
 	// Targets a support has already committed a heal to THIS tick. Cleared each tick. Stops two healers (processed in
 	// the same tick pass) both landing a big heal on the same target before either is flagged "casting" - the in-game
 	// double/triple overheal that burned the healers' MP twice as fast and ended raids in a mass-OOM wipe.
@@ -699,16 +710,33 @@ public class PhantomPartyManager
 		}
 	}
 
-	/** Spawns a member out of sight near the leader and starts it walking over. */
+	/**
+	 * The spot a recruit spawns at. In a peace zone (town) it is a far anchor so the recruit walks in for effect;
+	 * anywhere else it is a short, geo-validated offset right beside the leader, so it never spawns in a wall or a
+	 * neighbouring room and never has to jog through mob packs to reach the party. {@code getValidLocation} clamps the
+	 * offset back onto the leader's own reachable mesh, so the landing tile is always on the same side of any wall.
+	 */
+	private Location recruitSpawnAnchor(Player leader)
+	{
+		final double angle = Rnd.nextDouble() * 2 * Math.PI;
+		if (leader.isInsideZone(ZoneId.PEACE))
+		{
+			final int distance = Rnd.get(APPROACH_MIN, APPROACH_MAX);
+			return new Location(leader.getX() + (int) (Math.cos(angle) * distance), leader.getY() + (int) (Math.sin(angle) * distance), leader.getZ());
+		}
+		final int distance = Rnd.get(ADJACENT_MIN, ADJACENT_MAX);
+		final Location beside = new Location(leader.getX() + (int) (Math.cos(angle) * distance), leader.getY() + (int) (Math.sin(angle) * distance), leader.getZ());
+		return GeoEngine.getInstance().getValidLocation(leader, beside);
+	}
+
+	/** Spawns a member near the leader (walk-in distance in town, right beside them in the field) and starts it moving to its slot. */
 	private void spawnAndApproach(Player leader, PhantomManager.Recruit recruit, int level, boolean rezOnArrival)
 	{
 		if ((leader == null) || !leader.isOnline())
 		{
 			return;
 		}
-		final double angle = Rnd.nextDouble() * 2 * Math.PI;
-		final int distance = Rnd.get(APPROACH_MIN, APPROACH_MAX);
-		final Location anchor = new Location(leader.getX() + (int) (Math.cos(angle) * distance), leader.getY() + (int) (Math.sin(angle) * distance), leader.getZ());
+		final Location anchor = recruitSpawnAnchor(leader);
 		final Player npc = PhantomManager.getInstance().spawnPartyMember(anchor, level, recruit.role, recruit.classId, recruit.race);
 		if (npc == null)
 		{
@@ -1023,23 +1051,29 @@ public class PhantomPartyManager
 	 * @return {@code true} if the line matched a known command (and was acted on); {@code false} for free-form
 	 *         text the caller should route to the brain
 	 */
-	private boolean tryCommand(Member state, Player owner, String message, boolean addressed) {
+	private boolean tryCommand(Member state, Player owner, String message, boolean addressed)
+	{
 		final String text = message.toLowerCase().trim();
 
 		// A specific buff by name ("give me might", "ww pls") - checked first so "give me"/"gimme" aren't eaten by
 		// the grace ("brb") matcher. Grant it if the buffer knows it, else say it doesn't have it.
-		if (state.isSupport()) {
+		if (state.isSupport())
+		{
 			final String requested = PhantomBuffs.requestedBuff(text);
-			if (requested != null) {
+			if (requested != null)
+			{
 				final Skill known = PhantomBuffs.findKnown(buffs(state), requested);
-				if (known != null) {
+				if (known != null)
+				{
 					// "<buff> on me" / "<buff> on <member>": a named party member is the target, else the leader.
 					final Player named = findPartyMemberByName(state, text);
 					final Player target = (named != null) ? named : state.owner;
 					state.pendingBuff = known;
 					state.pendingBuffTarget = target;
 					deliver(state, "sure, " + known.getName().toLowerCase() + ((target == state.owner) ? "" : " on " + target.getName()));
-				} else {
+				}
+				else
+				{
 					deliver(state, "i don't have " + requested);
 				}
 				return true;
@@ -1050,9 +1084,11 @@ public class PhantomPartyManager
 		// exact one next tick, even if it's outside the auto rotation (e.g. Dance of Medusa). Checked BEFORE the
 		// generic "sing"/"dance" trigger below so a named request casts that one song, not the whole rotation. It
 		// resolves against the member's own learned skills, so a singer only answers song names and a dancer dances.
-		if ((state.role == PartyRole.SINGER) || (state.role == PartyRole.DANCER)) {
+		if ((state.role == PartyRole.SINGER) || (state.role == PartyRole.DANCER))
+		{
 			final Skill namedSong = requestedSong(state.npc, text);
-			if (namedSong != null) {
+			if (namedSong != null)
+			{
 				state.pendingSong = namedSong;
 				deliver(state, ((state.role == PartyRole.SINGER) ? "singing " : "dancing ") + namedSong.getName().toLowerCase());
 				return true;
@@ -1063,13 +1099,15 @@ public class PhantomPartyManager
 		// rotation on its own). "songs pls" reaches the singer, "dance" the dancer, "songs and dances" both.
 		// ("song" not "sing" for the singer - a bare "sing" substring also matches "using"/"losing" in casual chat.)
 		if (((state.role == PartyRole.SINGER) && containsAny(text, "song", "sing pls", "sing please")) //
-				|| ((state.role == PartyRole.DANCER) && containsAny(text, "dance"))) {
+			|| ((state.role == PartyRole.DANCER) && containsAny(text, "dance")))
+		{
 			state.songsRequested = true;
 			deliver(state, (state.role == PartyRole.SINGER) ? "singing" : "dancing");
 			return true;
 		}
 
-		if (((state.role == PartyRole.BOUNTY_HUNTER) && containsAny(text, "spoil on assist"))) {
+		if (((state.role == PartyRole.BOUNTY_HUNTER) && containsAny(text, "spoil on assist")))
+        {
 			state.spoilBehavior = SpoilBehavior.SPOIL_ON_ASSIST;
 			stopCamp(owner);
 			setFree(state, false);
@@ -1081,19 +1119,25 @@ public class PhantomPartyManager
 		// Raid pull control. Against a raid the party HOLDS until the tank initiates (see combatTick); these orders
 		// drive that. Only the tank acknowledges out loud so a full party doesn't chatter over each other.
 		// "tank attack" - order the tank to pull the boss; the rest follow once it has aggro.
-		if (containsAny(text, "tank attack", "tank pull", "tank go", "tank engage", "tank initiate", "tank in", "pull it", "pull the boss", "pull boss", "initiate")) {
-			if (state.role == PartyRole.TANK) {
+		if (containsAny(text, "tank attack", "tank pull", "tank go", "tank engage", "tank initiate", "tank in", "pull it", "pull the boss", "pull boss", "initiate"))
+		{
+			if (state.role == PartyRole.TANK)
+			{
 				state.pullOrdered = true;
 				state.pullSince = System.currentTimeMillis();
 				deliver(state, "pulling - hold dps till i have aggro");
+				dbg("ORDER 'tank attack' -> TANK '" + state.npc.getName() + "' pullOrdered (party of '" + owner.getName() + "')");
 			}
 			return true;
 		}
 		// "all attack" - everyone engages the current raid right now (skip the tank-initiate).
-		if (containsAny(text, "all attack", "everyone attack", "all in", "open fire", "engage all", "attack the raid", "everyone in", "burn it")) {
+		if (containsAny(text, "all attack", "everyone attack", "all in", "open fire", "engage all", "attack the raid", "everyone in", "burn it"))
+		{
 			_released.add(owner.getObjectId());
 			_releasedRaidTargets.removeIf(key -> raidOwnerId(key) == owner.getObjectId());
-			if (state.role == PartyRole.TANK) {
+			dbg("ORDER 'all attack' -> party of '" + owner.getName() + "' released (all members may engage the raid)");
+			if (state.role == PartyRole.TANK)
+			{
 				state.pullOrdered = true;
 				state.pullSince = System.currentTimeMillis();
 				deliver(state, "all in!");
@@ -1101,10 +1145,12 @@ public class PhantomPartyManager
 			return true;
 		}
 		// "hold fire" - re-engage the hold (stop feeding the raid, wait for the tank).
-		if (containsAny(text, "hold fire", "hold dps", "wait for tank", "fall back", "stop dps", "back off")) {
+		if (containsAny(text, "hold fire", "hold dps", "wait for tank", "fall back", "stop dps", "back off"))
+		{
 			clearRaidRelease(owner);
 			state.pullOrdered = false;
-			if (state.role == PartyRole.TANK) {
+			if (state.role == PartyRole.TANK)
+			{
 				deliver(state, "holding");
 			}
 			return true;
@@ -1113,15 +1159,19 @@ public class PhantomPartyManager
 		// ===== Camp-and-pull =====
 		// Break camp / stop pulling first - these phrases contain "camp"/"pull", so they must match before the
 		// generic "camp"/"pull" starters below.
-		if (containsAny(text, "break camp", "leave camp", "stop camp", "decamp", "no more camp", "stop camping", "move out")) {
-			if (stopCamp(owner)) {
+		if (containsAny(text, "break camp", "leave camp", "stop camp", "decamp", "no more camp", "stop camping", "move out"))
+		{
+			if (stopCamp(owner))
+			{
 				deliver(state, "breaking camp");
 			}
 			return true;
 		}
-		if (containsAny(text, "stop pull", "stop pulling", "no more pull", "hold pull", "quit pull", "stop fetching")) {
+		if (containsAny(text, "stop pull", "stop pulling", "no more pull", "hold pull", "quit pull", "stop fetching"))
+		{
 			final Camp camp = _camps.get(owner.getObjectId());
-			if (camp != null) {
+			if (camp != null)
+			{
 				camp.pullerId = 0; // stay camped, just stop fetching (fight only what wanders in)
 			}
 			deliver(state, "ok, no more pulls");
@@ -1129,27 +1179,32 @@ public class PhantomPartyManager
 		}
 		// "<name> pull [N]" - make this member the puller. Only when this member was specifically addressed (whisper or
 		// named in the party line), so a bare party-wide "pull" doesn't turn all eight into pullers at once.
-		if (addressed && containsWord(text, "pull") && !containsAny(text, "dont pull", "don't pull", "pull it", "pull the boss", "pull boss")) {
+		if (addressed && containsWord(text, "pull") && !containsAny(text, "dont pull", "don't pull", "pull it", "pull the boss", "pull boss"))
+		{
 			startCampPuller(state, parsePullSize(text));
 			return true;
 		}
 		// "camp here" / "make camp" - plant a fixed camp at the leader's spot; the party holds and fights only what's
 		// brought in. Matched on explicit phrases (not the bare word "camp"), so "go to abandoned camp" still travels.
-		if (text.equals("camp") || containsAny(text, "camp here", "camp up", "set up camp", "make camp", "lets camp", "let's camp", "set up here", "hold this spot", "set camp")) {
-			if (startCamp(owner)) {
+		if (text.equals("camp") || containsAny(text, "camp here", "camp up", "set up camp", "make camp", "lets camp", "let's camp", "set up here", "hold this spot", "set camp"))
+		{
+			if (startCamp(owner))
+			{
 				deliver(state, "camping here");
 			}
 			return true;
 		}
 
 		// Free-hunt vs assist toggle.
-		if (containsAny(text, "attack freely", "free hunt", "go wild", "ffa", "hunt freely", "do your own", "attack anything")) {
+		if (containsAny(text, "attack freely", "free hunt", "go wild", "ffa", "hunt freely", "do your own", "attack anything"))
+		{
 			stopCamp(owner); // a movement/targeting order breaks camp
 			setFree(state, true);
 			deliver(state, "k, hunting on my own");
 			return true;
 		}
-		if (containsAny(text, "assist", "focus", "help me", "on my target", "kill my target", "attack my")) {
+		if (containsAny(text, "assist", "focus", "help me", "on my target", "kill my target", "attack my"))
+		{
 			stopCamp(owner);
 			setFree(state, false);
 			state.following = true;
@@ -1158,11 +1213,13 @@ public class PhantomPartyManager
 		}
 
 		// Stand up on demand (interrupts an MP rest): "stand", "stand up", "get up", "on your feet".
-		if (containsAny(text, "stand up", "stand", "get up", "on your feet", "feet")) {
+		if (containsAny(text, "stand up", "stand", "get up", "on your feet", "feet"))
+		{
 			state.noSitUntil = System.currentTimeMillis() + STAND_SUPPRESS; // don't pop straight back down
 			afterHumanDelay(state, () ->
 			{
-				if (state.npc.isSitting()) {
+				if (state.npc.isSitting())
+				{
 					state.npc.standUp();
 				}
 			});
@@ -1171,14 +1228,16 @@ public class PhantomPartyManager
 		}
 
 		// Follow / hold.
-		if (containsAny(text, "follow", "come with", "on me", "regroup", "gather", "stack", "stick with")) {
+		if (containsAny(text, "follow", "come with", "on me", "regroup", "gather", "stack", "stick with"))
+		{
 			stopCamp(owner); // "follow" breaks camp - the party moves with the leader again
 			state.following = true;
 			setFree(state, false); // "follow" also leaves free-hunt - without this the member said "coming" but kept attacking
 			afterHumanDelay(state, () ->
 			{
 				final Player npc = state.npc;
-				if (npc.isAttackingNow() || npc.isInCombat()) {
+				if (npc.isAttackingNow() || npc.isInCombat())
+				{
 					npc.abortAttack();
 					npc.setTarget(null); // drop the mob too, or AutoUse keeps casting at it mid-follow
 				}
@@ -1187,7 +1246,8 @@ public class PhantomPartyManager
 			deliver(state, "coming");
 			return true;
 		}
-		if (containsAny(text, "stay", "wait here", "hold", "stop", "halt")) {
+		if (containsAny(text, "stay", "wait here", "hold", "stop", "halt"))
+		{
 			stopCamp(owner); // "stop"/"hold" ends camp too (stop everything, incl. pulling)
 			state.following = false;
 			setFree(state, false);
@@ -1197,14 +1257,16 @@ public class PhantomPartyManager
 		}
 
 		// Grace.
-		if (containsAny(text, "brb", "be right back", "give me", "gimme", "afk", "one sec", "1 sec", "moment")) {
+		if (containsAny(text, "brb", "be right back", "give me", "gimme", "afk", "one sec", "1 sec", "moment"))
+		{
 			state.graceUntil = System.currentTimeMillis() + BRB_GRACE;
 			deliver(state, "np");
 			return true;
 		}
 
 		// Disband / dismiss.
-		if (containsAny(text, "disband", "leave party", "leave the party", "dismiss", "you can go", "thanks bye", "thx bye", "bye", "gl hf")) {
+		if (containsAny(text, "disband", "leave party", "leave the party", "dismiss", "you can go", "thanks bye", "thx bye", "bye", "gl hf"))
+		{
 			deliver(state, "gl hf o/");
 			emote(state, SOCIAL_BOW, 400); // a parting bow before leaving
 			ThreadPool.schedule(() -> release(state, true), 1800);
@@ -1212,7 +1274,8 @@ public class PhantomPartyManager
 		}
 
 		// Status.
-		if (containsAny(text, "status", "hp?", "mp?", "you ok", "u ok")) {
+		if (containsAny(text, "status", "hp?", "mp?", "you ok", "u ok"))
+		{
 			deliver(state, "hp " + state.npc.getCurrentHpPercent() + "% / mp " + state.npc.getCurrentMpPercent() + "%");
 			return true;
 		}
@@ -1837,10 +1900,16 @@ public class PhantomPartyManager
 		}
 	}
 
-	/** One snapshot per engaged party: the boss (HP + who it's hating) and every member's role/HP/MP/action. */
+	/**
+	 * One snapshot per engaged party: the boss (HP + who it's hating) and every member's role/HP/MP/action, now with
+	 * the engage-gate reason so a member reported as {@code idle} also says WHY (e.g. {@code HOLD/TANK_NOT_ORDERED} or
+	 * {@code HOLD/NO_TANK_WAIT(6/20s)}). The first snapshot of a fresh engagement also prints a one-time ENGAGE START
+	 * banner dumping the initial roster + pull state, so "phantoms standing around" has a full trace from the pull.
+	 */
 	private void logRaidSnapshot()
 	{
 		final Set<Integer> seenParties = new HashSet<>();
+		final Set<Integer> engagedNow = new HashSet<>();
 		for (Member state : _members.values())
 		{
 			final Player owner = state.owner;
@@ -1857,6 +1926,7 @@ public class PhantomPartyManager
 			{
 				continue;
 			}
+			engagedNow.add(owner.getObjectId());
 			final StringBuilder bosses = new StringBuilder();
 			for (Monster boss : raids)
 			{
@@ -1864,14 +1934,33 @@ public class PhantomPartyManager
 				{
 					bosses.append(" | ");
 				}
-				bosses.append("'").append(boss.getName()).append("' hp=").append(boss.getCurrentHpPercent()).append("% hating=").append(describe(boss.getMostHated()));
+				bosses.append("'").append(boss.getName()).append("' lvl=").append(boss.getLevel()).append(" hp=").append(boss.getCurrentHpPercent()).append("% hating=").append(describe(boss.getMostHated()));
+			}
+			// One-time ENGAGE START banner for a fresh pull: the roster, whether a tank is present/pulling, and the
+			// party-wide release flags - the state that decides whether anyone is allowed to swing.
+			if (_raidTraceBannered.add(owner.getObjectId()))
+			{
+				final Member tank = findTankState(state);
+				final Player humanTank = humanRaidTank(state);
+				dbg("##### ENGAGE START party of '" + owner.getName() + "' vs " + bosses + " #####");
+				dbg("  pull-state: released=" + _released.contains(owner.getObjectId()) //
+					+ " phantomTank=" + ((tank == null) ? "none" : ("'" + tank.npc.getName() + "' pullOrdered=" + tank.pullOrdered + " dead=" + tank.npc.isDead())) //
+					+ " humanTank=" + ((humanTank == null) ? "none" : ("'" + humanTank.getName() + "'")));
+				for (Player member : owner.getParty().getMembers())
+				{
+					dbg("  roster: " + roleLabel(member) + " '" + member.getName() + "' lvl=" + member.getLevel());
+				}
 			}
 			dbg("=== raid " + bosses + " ===");
 			for (Player member : owner.getParty().getMembers())
 			{
-				dbg("  " + roleLabel(member) + " '" + member.getName() + "' hp=" + member.getCurrentHpPercent() + "% mp=" + member.getCurrentMpPercent() + "% " + action(member));
+				final Member ms = _members.get(member.getObjectId());
+				final String reason = (ms == null) ? "" : (" gate=" + (ms.raidGateReason == null ? "?" : ms.raidGateReason));
+				dbg("  " + roleLabel(member) + " '" + member.getName() + "' hp=" + member.getCurrentHpPercent() + "% mp=" + member.getCurrentMpPercent() + "% " + action(member) + reason);
 			}
 		}
+		// Prune banner flags for parties no longer engaged, so the next pull re-banners from scratch.
+		_raidTraceBannered.retainAll(engagedNow);
 	}
 
 	/** A live raid boss in combat near this member, or {@code null} - the boss to report on / the trigger for the trace. */
@@ -1989,9 +2078,9 @@ public class PhantomPartyManager
 				if (owner.isOnline())
 				{
 					speakEvent(state, false, //
-						"You just jogged up to " + owner.getName() + " for their hunting party and you're standing right next to them now. Tell them in one line to invite you to the party.", //
+						"You are standing right next to " + owner.getName() + ", who is looking for a hunting party. Tell them in one line to invite you to the party.", //
 						"here, inv me");
-					emote(state, SOCIAL_GREETING, 300 + Rnd.get(700)); // wave hello as it walks up
+					emote(state, SOCIAL_GREETING, 300 + Rnd.get(700)); // wave hello once beside the leader
 				}
 			}
 		}
@@ -2242,7 +2331,10 @@ public class PhantomPartyManager
 		if (state.assist)
 		{
 			final WorldObject t = owner.getTarget();
-			final boolean haveTarget = (t instanceof Monster) && !((Monster) t).isDead() && (owner.calculateDistance2D(t) <= ASSIST_MAX_RANGE);
+			// Assist only real, legal mob targets. A forbidden target the owner clicked - a fake-player shopkeeper
+			// (attacking it flags the phantom for PvP, the "seller got nuked in town" bug), a treasure box, or a quest
+			// monster - is never assisted, exactly as it is never picked while free-hunting.
+			final boolean haveTarget = (t instanceof Monster) && !((Monster) t).isDead() && !PhantomManager.isPhantomForbiddenTarget((Monster) t) && (owner.calculateDistance2D(t) <= ASSIST_MAX_RANGE);
 
 			// Raid pull control: against a RAID target the party HOLDS until the tank initiates. The tank engages only
 			// when ordered ("tank attack"); once it has the boss's threat the rest of the party is released to assist
@@ -2522,6 +2614,14 @@ public class PhantomPartyManager
 	private boolean engageFocus(Member state, Monster focus)
 	{
 		final Player npc = state.npc;
+		// Never fight inside a peace zone. Mobs don't live in one, so a focus here is a town target (e.g. a fake-player
+		// shopkeeper the owner clicked, or a mob chased to the border); attacking it is both illegal for the player and
+		// the "phantoms nuked a seller in Gludio" bug. Stand down - dropping the target lets the caller rest/hold.
+		if (npc.isInsideZone(ZoneId.PEACE) || focus.isInsideZone(ZoneId.PEACE))
+		{
+			npc.setTarget(null);
+			return false;
+		}
 		// A DPS that ripped raid aggro off the tank holds fire for a beat so the taunt can land (raid-only; no-op on trash).
 		if (isDps(state.role) && easeAggro(state, focus))
 		{
@@ -2696,7 +2796,7 @@ public class PhantomPartyManager
 		// then filter to mobs actually at the camp, so the party never wanders off to a mob the puller didn't bring in.
 		for (Monster mob : World.getInstance().getVisibleObjectsInRange(npc, Monster.class, CAMP_ENGAGE_RANGE + (2 * FORMATION_MAX_DIST)))
 		{
-			if (mob.isDead() || mob.isRaid())
+			if (mob.isDead() || mob.isRaid() || PhantomManager.isPhantomForbiddenTarget(mob))
 			{
 				continue;
 			}
@@ -2877,7 +2977,7 @@ public class PhantomPartyManager
 		double bestD = Double.MAX_VALUE;
 		for (Monster mob : World.getInstance().getVisibleObjectsInRange(npc, Monster.class, PULL_SEARCH_RANGE))
 		{
-			if (mob.isDead() || mob.isRaid() || (mob.getMostHated() == npc))
+			if (mob.isDead() || mob.isRaid() || (mob.getMostHated() == npc) || PhantomManager.isPhantomForbiddenTarget(mob))
 			{
 				continue;
 			}
@@ -3041,6 +3141,21 @@ public class PhantomPartyManager
 	 * than a whole-fight release: Zaken-style fights can have a boss, Inferior, and Bats active together, and ranged
 	 * DPS should not unload on an untanked add just because the tank briefly owned the first target.
 	 */
+	/**
+	 * Records the raid-gate verdict and its reason code on the member (DEBUG bookkeeping only) and returns the verdict
+	 * unchanged. Every {@link #mayAttackRaid} exit funnels through here, so the periodic snapshot can report exactly
+	 * WHY a member is holding fire instead of only that it is idle. Has no effect on behaviour: the side effects that
+	 * already ran before the return are untouched, and when {@link #DEBUG} is off this is a plain pass-through.
+	 */
+	private boolean gate(Member state, boolean allowed, String reason)
+	{
+		if (DEBUG)
+		{
+			state.raidGateReason = (allowed ? "GO/" : "HOLD/") + reason;
+		}
+		return allowed;
+	}
+
 	private boolean mayAttackRaid(Member state, Monster raid)
 	{
 		final Player owner = state.owner;
@@ -3052,36 +3167,36 @@ public class PhantomPartyManager
 		// their master). Uses THIS member's level, since level spread can put one recruit over the line alone.
 		if (!NpcConfig.RAID_DISABLE_CURSE && raid.giveRaidCurse() && (state.npc.getLevel() > (raid.getLevel() + RAID_CURSE_LEVEL_GAP)))
 		{
-			return false;
+			return gate(state, false, "RAID_CURSE_GAP(lvl " + state.npc.getLevel() + " vs boss " + raid.getLevel() + ")");
 		}
 		if (_released.contains(ownerId))
 		{
-			return true; // explicit "all attack" order - the player accepted the risk
+			return gate(state, true, "ALL_ATTACK_ORDER"); // explicit "all attack" order - the player accepted the risk
 		}
 		if (state.role == PartyRole.TANK)
 		{
 			if (!state.pullOrdered)
 			{
-				return false; // tank waits for the "tank attack" order before pulling
+				return gate(state, false, "TANK_NOT_ORDERED"); // tank waits for the "tank attack" order before pulling
 			}
 			if (raid.getMostHated() == state.npc)
 			{
 				_releasedRaidTargets.add(raidKey(ownerId, raid.getObjectId()));
 			}
-			return true;
+			return gate(state, true, "TANK_PULLING");
 		}
 
 		// Execute rule: a raid minion in its last sliver is finished by anyone.
 		if (raid.isRaidMinion() && (raid.getCurrentHpPercent() <= MINION_EXECUTE_PERCENT))
 		{
-			return true;
+			return gate(state, true, "MINION_EXECUTE");
 		}
 		// Defend the leader: a minion whose most-hated is the PLAYER is attackable by everyone - the party helps
 		// the human kill the thing that is chasing them (second Ruell attempt: the party watched, gated, while the
 		// leader soloed a Wind add from 19% down and eventually died to it).
 		if (raid.isRaidMinion() && (raid.getMostHated() == owner))
 		{
-			return true;
+			return gate(state, true, "DEFEND_LEADER");
 		}
 		final Member tank = findTankState(state);
 		// Raid self-defense: this raid mob is ON this member (most-hated) - standing still sheds no hate in L2,
@@ -3090,10 +3205,22 @@ public class PhantomPartyManager
 		// back, which beats out-damaging the taunt).
 		if ((raid.getMostHated() == state.npc) && (raid.isRaidMinion() || (tank == null) || tank.npc.isDead()))
 		{
-			return true;
+			return gate(state, true, "SELF_DEFENSE");
 		}
 		if ((tank == null) || tank.npc.isDead())
 		{
+			// No recruited phantom tank, but the human leader may be personally tanking. When that human tank actually
+			// holds this raid mob's hate, release DPS now (and mark the target released for the pull, mirroring the
+			// phantom-tank owns-target path below) instead of making the party wait out the no-tank fail-open timeout.
+			// Gated on the human being most-hated so a tank-class leader who is NOT holding aggro still falls through to
+			// the timeout rather than freezing DPS behind a tank that is not doing its job.
+			final Player humanTank = humanRaidTank(state);
+			if ((humanTank != null) && (raid.getMostHated() == humanTank))
+			{
+				_releasedRaidTargets.add(raidKey(ownerId, raid.getObjectId()));
+				_noTankSince.remove(ownerId);
+				return gate(state, true, "HUMAN_TANK_AGGRO");
+			}
 			final long noTankNow = System.currentTimeMillis();
 			final Long since = _noTankSince.putIfAbsent(ownerId, noTankNow);
 			if ((since != null) && ((noTankNow - since) >= NO_TANK_FAILOPEN_MS))
@@ -3104,15 +3231,16 @@ public class PhantomPartyManager
 				{
 					deliver(state, "no tank up, going in - say 'hold' to stop");
 				}
-				return true;
+				return gate(state, true, "NO_TANK_FAILOPEN");
 			}
-			return false;
+			final long waited = (since == null) ? 0 : (noTankNow - since);
+			return gate(state, false, "NO_TANK_WAIT(" + (waited / 1000) + "/" + (NO_TANK_FAILOPEN_MS / 1000) + "s)");
 		}
 		_noTankSince.remove(ownerId);
 		final long now = System.currentTimeMillis();
 		if ((tank.recoveryUntil > now) && (tank.npc.getCurrentHpPercent() < POST_RES_TANK_READY_PERCENT))
 		{
-			return false; // tank just stood up; let support heal it and let taunts land before DPS resumes
+			return gate(state, false, "TANK_RECOVERING"); // tank just stood up; let support heal it and let taunts land before DPS resumes
 		}
 		if (tank.npc.getCurrentHpPercent() >= POST_RES_TANK_READY_PERCENT)
 		{
@@ -3124,7 +3252,7 @@ public class PhantomPartyManager
 		if (hated == tank.npc)
 		{
 			_releasedRaidTargets.add(key);
-			return true;
+			return gate(state, true, "TANK_HAS_AGGRO");
 		}
 		// An ADD (raid minion), once opened, stays free for EVERY dps regardless of who currently holds it. The old
 		// rule re-locked the add the moment a party member was most-hated on it - but a melee DD out-aggros the tank
@@ -3134,9 +3262,10 @@ public class PhantomPartyManager
 		// dps still hold off it while it is loose on a squishy and the tank reclaims it.
 		if (_releasedRaidTargets.contains(key) && (raid.isRaidMinion() || (hated == null) || !isPartyMember(state, hated)))
 		{
-			return true;
+			return gate(state, true, "TARGET_RELEASED");
 		}
-		return false; // non-tank waits for the tank to own this exact raid mob/add
+		// non-tank waits for the tank to own this exact raid mob/add - name who currently holds it, the usual culprit
+		return gate(state, false, "BOSS_LOCKED(hate=" + describe(hated) + ")");
 	}
 
 	private boolean hasRaidRelease(Player owner)
@@ -3332,9 +3461,10 @@ public class PhantomPartyManager
 		final double perpX = -ny;
 		final double perpY = nx;
 		final int lane = ((npc.getObjectId() % 7) - 3) * spreadStep; // -3..+3 stable lanes
-		final int standX = raid.getX() + (int) (nx * desiredRange) + (int) (perpX * lane);
-		final int standY = raid.getY() + (int) (ny * desiredRange) + (int) (perpY * lane);
-		final Location destination = GeoEngine.getInstance().getValidLocation(npc, new Location(standX, standY, npc.getZ()));
+		// LOS-validated: a far backline lane in a cramped raid room clips behind a wall/pillar, and the core silently
+		// rejects an offensive cast with no line of sight - so a caster/archer parked there never fires and reads as
+		// idle. Pull the stand point inward until it can actually see the boss instead of committing to a blind lane.
+		final Location destination = losStandPoint(npc, raid, nx, ny, perpX, perpY, desiredRange, lane);
 		if (npc.calculateDistance2D(destination) <= tolerance)
 		{
 			state.positionTicks = 0;
@@ -3344,6 +3474,42 @@ public class PhantomPartyManager
 		npc.setRunning();
 		npc.getAI().setIntention(Intention.MOVE_TO, destination);
 		return true;
+	}
+
+	/**
+	 * A ranged stand point at {@code desiredRange} from {@code target} on the {@code (nx,ny)} bearing with a lateral
+	 * {@code lane} offset, but pulled inward toward the target until it has line of sight. A cramped raid room clips a
+	 * far, fanned-out backline point behind a wall or the boss's own bulk, and the core silently rejects an offensive
+	 * cast with no LOS, so a member parked there never lands a spell. Steps in along the bearing first (keeping the
+	 * anti-stack fan when it can), then straight in without the fan, and finally falls back to a close point on the
+	 * target line - being in melee AoE and casting beats standing far back doing nothing.
+	 */
+	private Location losStandPoint(Player npc, Creature target, double nx, double ny, double perpX, double perpY, int desiredRange, int lane)
+	{
+		final GeoEngine geo = GeoEngine.getInstance();
+		final int instanceId = npc.getInstanceId();
+		final int tx = target.getX();
+		final int ty = target.getY();
+		final int tz = target.getZ();
+		for (int range = desiredRange; range >= LOS_STEP_MIN; range -= LOS_STEP)
+		{
+			final Location candidate = geo.getValidLocation(npc, new Location(tx + (int) (nx * range) + (int) (perpX * lane), ty + (int) (ny * range) + (int) (perpY * lane), npc.getZ()));
+			if (geo.canSeeTarget(candidate.getX(), candidate.getY(), candidate.getZ(), tx, ty, tz, instanceId))
+			{
+				return candidate;
+			}
+		}
+		// The fanned lane never cleared (a tight room); drop the lateral offset and step straight in on the target line.
+		for (int range = desiredRange; range >= LOS_STEP_MIN; range -= LOS_STEP)
+		{
+			final Location candidate = geo.getValidLocation(npc, new Location(tx + (int) (nx * range), ty + (int) (ny * range), npc.getZ()));
+			if (geo.canSeeTarget(candidate.getX(), candidate.getY(), candidate.getZ(), tx, ty, tz, instanceId))
+			{
+				return candidate;
+			}
+		}
+		// Last resort: hug the target line at the minimum range - almost always has LOS, and a close cast beats none.
+		return geo.getValidLocation(npc, new Location(tx + (int) (nx * LOS_STEP_MIN), ty + (int) (ny * LOS_STEP_MIN), npc.getZ()));
 	}
 
 	/**
@@ -3674,10 +3840,10 @@ public class PhantomPartyManager
 	private static void restoreAutoSkills(Member state)
 	{
 		final Player npc = state.npc;
-		if ((state.role == PartyRole.TANK) && (npc.getKnownSkill(UD_SKILL_ID) != null) && !npc.getAutoUseSettings().getAutoBuffs().contains(UD_SKILL_ID))
-		{
-			npc.getAutoUseSettings().getAutoBuffs().add(UD_SKILL_ID);
-		}
+		// Ultimate Defense is intentionally NOT restored to the auto-buff list. It is a panic button that roots the
+		// caster and sits on a 30-minute reuse, so auto-maintaining it froze an ambient phantom out of combat -
+		// registerAutoSkills now excludes it (and every emergency self-buff) from the ambient loadout as well, so a
+		// released friend resumes ambient life without it. In party it stays hand-cast at low HP by maybeSurvival.
 		if (state.parkedAutoSkills != null)
 		{
 			for (Integer id : state.parkedAutoSkills)
@@ -5117,6 +5283,23 @@ public class PhantomPartyManager
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * The human party leader when they are personally acting as the raid tank: a living tank-class player. Returned only
+	 * for the human, never a phantom - the recruited tank keeps its own {@link Member} path (recovery, reclaim, taunt
+	 * upkeep) which a human does not have. Used to release DPS immediately once the human genuinely holds the boss,
+	 * instead of leaning on the no-tank fail-open timeout. It deliberately does NOT stand in for the phantom tank in the
+	 * squishy self-defense / reclaim logic: a human is not guaranteed to re-taunt, so those paths stay fail-open.
+	 */
+	private Player humanRaidTank(Member state)
+	{
+		final Player owner = state.owner;
+		if ((owner == null) || owner.isDead())
+		{
+			return null;
+		}
+		return (PhantomManager.roleForClass(owner.getPlayerClass()) == PartyRole.TANK) ? owner : null;
 	}
 
 	/** {@code true} if a live raid boss is in combat near the party - drives pre-emptive healing and no MP-sitting. */

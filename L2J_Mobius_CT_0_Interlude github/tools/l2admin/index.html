@@ -3214,7 +3214,6 @@ const FPC_APP_HTML = `<div id="app">
 					<option value="IDLE">Idle / loiter — drift in an area</option>
 					<option value="RUNNER">Runner — roam a route (random)</option>
 					<option value="PATROL">Patrol — walk a route in order</option>
-					<option value="FARM">Farm — hunt monsters in an area</option>
 					<option value="SHOP">Shop — private-store vendors</option>
 				</select>
 				<div id="storeRow">
@@ -3264,10 +3263,10 @@ const FPC_APP_HTML = `<div id="app">
 			<button id="fpcSelAll" class="sec" title="Check every population">Select all</button>
 			<button id="fpcSelNone" class="sec" title="Uncheck every population">Select none</button>
 			<button id="fpcExportPops" class="sec" title="Export the checked populations, or all of them if none are checked">⭳ Export</button>
-			<button id="fpcImportPops" class="sec" title="Import populations from a file (merges - never overwrites yours)">⭱ Import</button>
-			<input id="fpcImportInput" type="file" accept="application/json,.json" style="display:none" />
+			<button id="fpcImportPops" class="sec" title="Import populations from a PhantomPopulations.xml / FakePlayerBehavior.xml file (merges - never overwrites yours)">⭱ Import</button>
+			<input id="fpcImportInput" type="file" accept=".xml,application/xml,.json,application/json" style="display:none" />
 		</div>
-		<div class="muted" style="padding:0 12px 6px">Export the <b>checked</b> populations, or all of them if none are checked. Import <b>merges</b> - a population whose name you already have is skipped, never overwritten.</div>
+		<div class="muted" style="padding:0 12px 6px">Export the <b>checked</b> populations (or all, if none are checked) as a server-format <b>.xml</b> file. Import reads a real <b>PhantomPopulations.xml</b> / <b>FakePlayerBehavior.xml</b> (or a build_populations.py file) and <b>merges</b> - a population whose name you already have is skipped, never overwritten.</div>
 		<div id="list" style="min-height:160px"></div>
 		</details>
 
@@ -3547,21 +3546,18 @@ const LANDMARKS = [
 //   IDLE   -> WANDER  (drift within radius / drawn area)   blue
 //   RUNNER -> VISIT   (route, next waypoint chosen at random) purple
 //   PATROL -> PATROL  (route, walked in order)               purple
-//   FARM   -> FARM    (hunt monsters within radius)          red
 //   SHOP   -> WANDER  (private-store vendors, small drift)   gold
-const BEHAVIORS = ['IDLE','RUNNER','PATROL','FARM','SHOP'];
+const BEHAVIORS = ['IDLE','RUNNER','PATROL','SHOP'];
 const BEHAVIOR_DEFAULTS = {
 	IDLE:   { type: 'WANDER', run: false, pauseMin: 25, pauseMax: 80, roam: 'pop'  },
 	SHOP:   { type: 'WANDER', run: false, pauseMin: 25, pauseMax: 80, roam: 120    },
 	RUNNER: { type: 'VISIT',  run: false, pauseMin: 25, pauseMax: 70, roam: null   },
-	PATROL: { type: 'PATROL', run: false, pauseMin: 10, pauseMax: 30, roam: null   },
-	FARM:   { type: 'FARM',   run: true,  pauseMin: 2,  pauseMax: 6,  roam: 'pop'  }
+	PATROL: { type: 'PATROL', run: false, pauseMin: 10, pauseMax: 30, roam: null   }
 };
 const BEHAVIOR_HELP = {
 	IDLE:   'Bots drift around at random within the radius (or the drawn zone) — the standing-around-town crowd.',
 	RUNNER: 'Bots roam between the route waypoints you place, picking the next one at RANDOM. Use "Draw route".',
 	PATROL: 'Bots walk the route waypoints IN ORDER and loop, like guards or travellers. Use "Draw route".',
-	FARM:   'Bots seek out and fight monsters within the radius (field hunters).',
 	SHOP:   'Bots open private stores. Pick a store type; they barely move around the spawn.'
 };
 function isRouteBehavior(b){ return b === 'RUNNER' || b === 'PATROL'; }
@@ -3575,7 +3571,6 @@ function behaviorFromProfile(prof, store){
 	switch (prof.type){
 		case 'VISIT':  return 'RUNNER';
 		case 'PATROL': return 'PATROL';
-		case 'FARM':   return 'FARM';
 		default:       return 'IDLE';
 	}
 }
@@ -3583,7 +3578,6 @@ function popColor(p){
 	if (mode === 'phantom') return '#46c6c0';
 	switch (p.behavior){
 		case 'SHOP':   return '#e8c24a';
-		case 'FARM':   return '#e0563b';
 		case 'RUNNER':
 		case 'PATROL': return '#c06ee0';
 		default:       return '#4a8de8'; // IDLE
@@ -4551,39 +4545,78 @@ function panToPop(p){ const a = popAnchor(p); cam.x = a.x - (cv.width / 2) / cam
 FPCGID('toggleAll').onclick = () => { const anyVisible = pops.some(p => p.visible !== false); pops.forEach(p => p.visible = !anyVisible); FPCGID('toggleAll').textContent = anyVisible ? 'Show all' : 'Hide all'; renderList(); draw(); };
 
 // ---- population export / import (merge, never overwrite) ----
-// Populations are plain objects, so a transfer file is just the current mode's list as JSON.
+// The transfer format is the SAME XML the server reads (PhantomPopulations.xml /
+// FakePlayerBehavior.xml), so an exported file can be dropped straight onto a server and any
+// real server file (or the build_populations.py output) can be imported here. Older JSON files
+// exported by earlier builds are still accepted on import for back-compat.
 // Import matches on name (case-insensitive) and skips any population you already have, so it can
 // never clobber your own work - the same merge posture the Bot Clans tab uses.
-function popIoName(){ return (mode === 'phantom' ? 'phantom-populations' : 'fakeplayer-populations') + '.json'; }
+function popIoName(){ return (mode === 'phantom' ? 'phantom-populations' : 'fakeplayer-populations') + '.xml'; }
 function popModeLabel(m){ return m === 'phantom' ? 'Phantoms' : 'NPC fake players'; }
-function cleanPopForExport(p){
-	const c = JSON.parse(JSON.stringify(p));
-	delete c._sel;        // transient export-selection flag
-	delete c._profName;   // regenerated on save from the population's behavior
-	return c;
+// A bare <population> (no profile/store/route/race, no <profile> block) is a phantom file;
+// FakePlayerBehavior.xml always carries movement <profile> elements and behavior attributes.
+function detectXmlPopMode(doc){
+	if (doc.querySelector('profile')) return 'npc';
+	const pop = doc.querySelector('population');
+	if (pop && (pop.hasAttribute('store') || pop.hasAttribute('profile') || pop.hasAttribute('route') || pop.hasAttribute('behavior') || pop.hasAttribute('race'))) return 'npc';
+	return 'phantom';
+}
+// Parse an incoming XML file into population objects WITHOUT disturbing the current working set.
+// Reuses the tool's own parsers so imported pops are identical to freshly loaded ones (NPC pops
+// keep their folded-in profile/behavior/route data).
+function parseIncomingXmlPops(text){
+	if (mode === 'phantom') return parsePhantomText(text);
+	const savePops = pops, savePres = preserved, saveSel = selected;
+	parseXml(text);            // fills global pops from the file (NPC profiles folded in)
+	const got = pops;
+	pops = savePops; preserved = savePres; selected = saveSel;
+	return got;
+}
+// Serialize a chosen subset to server-format XML using the tool's own builders, without mutating
+// the real working set (build over throwaway clones, then restore the globals the builders touch).
+function buildPopsXml(list){
+	const savePops = pops, saveFriends = phantomFriends, savePres = preserved, saveSel = selected;
+	pops = list.map(p => { const c = JSON.parse(JSON.stringify(p)); delete c._sel; return c; });
+	let xml;
+	if (mode === 'phantom'){ phantomFriends = []; xml = buildPhantomXml(); } // populations only, not <friend> orders
+	else { preserved = { assigns: [], def: null }; xml = buildXml(); }        // subset + its profiles, no global assign/default
+	pops = savePops; phantomFriends = saveFriends; preserved = savePres; selected = saveSel;
+	return xml;
 }
 function exportPops(){
 	if (mode === 'raid') return;
 	if (!pops.length){ toast('No populations to export.', true); return; }
 	const chosen = pops.filter(p => p._sel);
 	const list = chosen.length ? chosen : pops;
-	const data = { tool: 'l2admin-populations', version: 1, mode, exported: new Date().toISOString(),
-		populations: list.map(cleanPopForExport) };
-	downloadBlob(JSON.stringify(data, null, 2), popIoName(), 'application/json');
-	toast('Exported ' + list.length + ' population' + (list.length === 1 ? '' : 's') + (chosen.length ? ' (selected).' : ' (all).'));
+	downloadBlob(buildPopsXml(list), popIoName(), 'application/xml');
+	toast('Exported ' + list.length + ' population' + (list.length === 1 ? '' : 's') + (chosen.length ? ' (selected)' : ' (all)') + ' as XML.');
 }
 async function importPopsFile(file){
 	if (mode === 'raid') return;
-	let data;
-	try { data = JSON.parse(await file.text()); } catch(_){ toast("That isn't a valid population file.", true); return; }
-	if (!data || !Array.isArray(data.populations)){ toast('That file has no populations.', true); return; }
-	if (data.mode && data.mode !== mode){ // npc and phantom populations live in different files with different fields
-		toast('That file holds ' + popModeLabel(data.mode) + ' populations. Switch to the ' + popModeLabel(data.mode) + ' tab, then import.', true);
-		return;
+	const text = await file.text();
+	let incoming;
+	if (text.trim().startsWith('<')){ // native XML (a real server file or build_populations.py output)
+		const doc = new DOMParser().parseFromString(text, 'application/xml');
+		if (doc.querySelector('parsererror') || !doc.querySelector('list')){ toast("That XML isn't a populations file (no <list> root).", true); return; }
+		const xmlMode = detectXmlPopMode(doc);
+		if (xmlMode !== mode){ // npc and phantom populations live in different files with different fields
+			toast('That file holds ' + popModeLabel(xmlMode) + ' populations. Switch to the ' + popModeLabel(xmlMode) + ' tab, then import.', true);
+			return;
+		}
+		incoming = parseIncomingXmlPops(text);
+	} else { // legacy JSON exported by an earlier build
+		let data;
+		try { data = JSON.parse(text); } catch(_){ toast("That isn't a valid population file (expected .xml or .json).", true); return; }
+		if (!data || !Array.isArray(data.populations)){ toast('That file has no populations.', true); return; }
+		if (data.mode && data.mode !== mode){
+			toast('That file holds ' + popModeLabel(data.mode) + ' populations. Switch to the ' + popModeLabel(data.mode) + ' tab, then import.', true);
+			return;
+		}
+		incoming = data.populations;
 	}
 	const have = new Set(pops.map(p => (p.name || '').trim().toLowerCase()));
 	let add = 0, skip = 0;
-	data.populations.forEach(raw => {
+	incoming.forEach(raw => {
 		const name = String((raw && raw.name) || '').trim();
 		if (!name || have.has(name.toLowerCase())){ skip++; return; } // never overwrite a population you already have
 		const p = JSON.parse(JSON.stringify(raw));
@@ -4821,7 +4854,7 @@ function buildXml(){
 		let a = `name="${esc(name)}" type="${d.type}"`;
 		const route = isRouteBehavior(p.behavior);
 		if (!route){
-			// WANDER/FARM roam distance: the population's own radius for IDLE/FARM, a small fixed drift for SHOP.
+			// WANDER roam distance: the population's own radius for IDLE, a small fixed drift for SHOP.
 			const hasPoly = p.poly && p.poly.length >= 3;
 			const roam = (d.roam === 'pop') ? (hasPoly ? polyRadius(p.poly, polyCentroid(p.poly)) : p.radius) : d.roam;
 			if (roam != null) a += ` radius="${roam}"`;

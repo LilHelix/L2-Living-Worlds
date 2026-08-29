@@ -145,10 +145,20 @@ function Find-Java($javaHome) {
 }
 
 # ============================================================================
-Clear-Host
+# Clear-Host throws when there is no real console screen buffer (e.g. when the GUI
+# control panel captures this script's output). Never let that abort startup.
+try { Clear-Host } catch { }
 Write-Host "########################################################" -ForegroundColor Magenta
 Write-Host "#   L2 Offline 'Living World' - One-Click Launcher     #" -ForegroundColor Magenta
 Write-Host "########################################################" -ForegroundColor Magenta
+
+# Show the installed version, read from launcher\version.txt. That file ships in
+# every pack (stamped at build time) and updates itself when a patch is applied,
+# so this line is always current without the player doing anything.
+$VersionPath = Join-Path $LauncherDir 'version.txt'
+$installedVersion = if (Test-Path $VersionPath) { (Get-Content $VersionPath -Raw).Trim() } else { 'unknown' }
+Write-Host "   version $installedVersion" -ForegroundColor DarkGray
+Write-Host ""
 
 if (-not (Test-Path $IniPath)) { Fail "launcher.ini not found at $IniPath" }
 $ini = Read-Ini $IniPath
@@ -165,6 +175,8 @@ $autoMysql = Is-True (Get-Ini $ini 'database' 'AutoStartMysql' 'true')
 $startLogin= Is-True (Get-Ini $ini 'servers'  'StartLogin' 'true')
 $startGame = Is-True (Get-Ini $ini 'servers'  'StartGame'  'true')
 $startBrain= Is-True (Get-Ini $ini 'servers'  'StartBrain' 'false')
+$clientExe   = Get-Ini $ini 'client' 'ClientExe' ''
+$launchClient= Is-True (Get-Ini $ini 'client' 'LaunchClient' 'false')
 
 Assert-NoManagedProcesses
 
@@ -375,12 +387,45 @@ if ($startBrain) {
         $brainBat = Join-Path (Split-Path -Parent $DistDir) 'setup_brain.bat'
     }
     if (Test-Path $brainBat) {
-        Write-Info "launching FPC brain ..."
-        $brainProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `"$brainBat`"" -PassThru
+        # --auto = non-interactive: setup_brain.bat starts the brain only if it has
+        # already been configured (.env + .venv). If it has not, it prints a short
+        # note and exits without prompting, so a normal boot never hangs waiting for
+        # input. Configure the brain once by double-clicking setup_brain.bat, or use
+        # the "Set up / configure brain" button in the Control Panel.
+        Write-Info "launching FPC brain (auto - only if already configured) ..."
+        $brainProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList "/c `"$brainBat`" --auto" -PassThru
         Register-LaunchedProcess 'FPC Brain' $brainProcess ([System.IO.Path]::GetFileName($brainBat))
-        Write-Ok "brain started (PID $($brainProcess.Id))"
+        Write-Ok "brain launch requested (PID $($brainProcess.Id))"
+        Write-Info "if the brain is not set up yet, run setup_brain.bat once to configure it."
     } else {
         Write-Info "StartBrain=true but setup_brain.bat not found in brain\ or next to dist\ - skipping"
+    }
+}
+
+# ---- 5. Optional game client -----------------------------------------------
+# Launch the L2 client too, so one double-click starts the whole thing. It is
+# deliberately NOT added to the launcher process registry: Stop-Server shuts down
+# the servers and DB but leaves the game client open (it just disconnects).
+if ($launchClient) {
+    Write-Head "Game client"
+    if ($clientExe -eq '') {
+        Write-Info "LaunchClient=true but ClientExe is blank in launcher.ini - skipping."
+    } elseif (-not (Test-Path $clientExe)) {
+        Write-Info "game client not found at: $clientExe - skipping (fix ClientExe in launcher.ini)."
+    } else {
+        # Wait for the game server to actually bind its port (7777, stock CT_0
+        # Interlude) so the client does not come up to a dead server list. If it
+        # is not up in time, launch anyway - the user asked for the client.
+        if ($startGame) {
+            Write-Info "waiting for the game server (port 7777) before launching the client ..."
+            # First boot compiles datapack scripts, which can take a while, so allow
+            # a generous window; launch anyway if it is still not up by then.
+            if (-not (Wait-Port 7777 180)) { Write-Info "game port 7777 not open yet - launching the client anyway." }
+        }
+        $clientDir = Split-Path -Parent $clientExe
+        Write-Info "launching game client: $clientExe"
+        Start-Process -FilePath $clientExe -WorkingDirectory $clientDir | Out-Null
+        Write-Ok "game client launched"
     }
 }
 

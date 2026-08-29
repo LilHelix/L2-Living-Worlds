@@ -53,6 +53,9 @@ public class FakePlayersConfig
 	public static int FAKE_PLAYER_RECRUIT_ENCHANT_CHANCE;
 	public static int FAKE_PLAYER_RECRUIT_ENCHANT_MIN;
 	public static int FAKE_PLAYER_RECRUIT_ENCHANT_MAX;
+	public static boolean FAKE_PLAYER_AUTO_HUNTING_ZONES;
+	public static boolean PHANTOM_HUNTER_PLAYSTYLES;
+	public static boolean PHANTOM_HUNTER_RETALIATE;
 
 	public static void load()
 	{
@@ -78,5 +81,8 @@ public class FakePlayersConfig
 		FAKE_PLAYER_RECRUIT_ENCHANT_CHANCE = config.getInt("FakePlayerRecruitEnchantChance", 65);
 		FAKE_PLAYER_RECRUIT_ENCHANT_MIN = config.getInt("FakePlayerRecruitEnchantMin", 3);
 		FAKE_PLAYER_RECRUIT_ENCHANT_MAX = config.getInt("FakePlayerRecruitEnchantMax", 6);
+		FAKE_PLAYER_AUTO_HUNTING_ZONES = config.getBoolean("PhantomAutoHuntingZones", true);
+		PHANTOM_HUNTER_PLAYSTYLES = config.getBoolean("PhantomHunterPlaystyles", true);
+		PHANTOM_HUNTER_RETALIATE = config.getBoolean("PhantomHunterRetaliate", true);
 	}
 }

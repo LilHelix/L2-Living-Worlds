@@ -3,9 +3,13 @@
 /build/
 .claude
 
-
-/dist/game/config
 /dist/game/log
-
-/dist/login/config
 /dist/login/log
+
+# Reproducible output of tools/build_populations.py (a per-server tuning artifact,
+# regenerate with the tool; the server loads PhantomPopulations.xml, not this side file).
+/dist/game/data/PhantomPopulations.generated.xml
+
+# Added this temporarily, should be swapped with dev config when it's ready
+/dist/game/config
+/dist/login/config

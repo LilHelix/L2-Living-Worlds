@@ -13,6 +13,10 @@
 # Usage:
 #   ./setup_brain.sh                 # use default model (llama3.1)
 #   OLLAMA_MODEL=gemma3 ./setup_brain.sh
+#   ./setup_brain.sh --auto          # non-interactive launch used by a launcher:
+#                                    #   if already configured (.env + .venv), just
+#                                    #   start fpc_brain.py; otherwise print a note and
+#                                    #   exit 2 without doing any install work.
 #
 set -euo pipefail
 
@@ -23,6 +27,19 @@ PYTHON="${PYTHON:-python3}"
 
 say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m[!] %s\033[0m\n' "$*"; }
+
+# --- 0. --auto: non-interactive launch (never installs, never blocks) -------
+if [[ "${1:-}" == "--auto" ]]; then
+    if [[ ! -f .env || ! -d .venv ]]; then
+        say "Brain not configured yet - skipping auto-start."
+        echo "    Run ./setup_brain.sh once to set it up."
+        exit 2
+    fi
+    # shellcheck disable=SC1091
+    source .venv/bin/activate
+    say "Starting the FPC brain on http://127.0.0.1:5000 (auto) ..."
+    exec "$PYTHON" fpc_brain.py
+fi
 
 # --- 1. Ollama -------------------------------------------------------------
 if ! command -v ollama >/dev/null 2>&1; then

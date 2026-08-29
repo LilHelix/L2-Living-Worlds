@@ -26,9 +26,16 @@
 game/data/html/admin/rates.htm
 game/data/scripts/handlers/chat/commands/admin/AdminRates.java
 brain/fpc_brain.py
+brain/requirements.txt
+brain/setup_brain.bat
+brain/setup_brain.sh
+Check-Updates.bat
+Configure-Brain.bat
+launcher/update.ps1
 tools/l2admin/index.html
 game/data/PhantomPlaystyles.xml
 game/data/xsd/PhantomPlaystyles.xsd
+game/data/PhantomPopulations.xml
 game/data/BotClans.xml
 game/data/xsd/BotClans.xsd
 game/data/crests
@@ -43,3 +50,5 @@ Control-Panel.bat
 launcher/launcher.ps1
 launcher/stop.ps1
 launcher/Control-Panel.ps1
+launcher/assets/background.png
+launcher/assets/launcher.ico

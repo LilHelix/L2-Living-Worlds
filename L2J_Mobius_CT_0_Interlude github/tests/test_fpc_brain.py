@@ -2,6 +2,7 @@ import importlib.util
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -314,6 +315,98 @@ class KnowledgeRetrievalTests(unittest.TestCase):
 
     def test_random_knowledge_note_empty_when_no_category_match(self):
         self.assertEqual("", self.brain.random_knowledge_note(2, allow={"item"}))
+
+
+class LeakGuardTests(unittest.TestCase):
+    """sanitize() must drop replies that carry leaked prompt/instruction scaffolding, structurally, not just
+    the exact strings on the fixed blacklist."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.brain = load_brain_module()
+
+    def test_drops_uppercase_prompt_heading(self):
+        self.assertEqual("", self.brain.sanitize("YOUR PERSONALITY:\nquiet and terse\nye 12k works"))
+
+    def test_drops_mixed_case_scaffold_heading(self):
+        self.assertEqual("", self.brain.sanitize("Memory about this player: haggles a lot"))
+        self.assertEqual("", self.brain.sanitize("World Facts: level cap is 80"))
+
+    def test_drops_copied_constitution_phrase(self):
+        self.assertEqual("", self.brain.sanitize("remember you are a real human player, reply with one line"))
+
+    def test_keeps_normal_chat_and_trade_shorthand(self):
+        self.assertEqual("ye 12k works, where u wanna meet?",
+                         self.brain.sanitize("ye 12k works, where u wanna meet?"))
+        self.assertEqual("WTS SSD 5k pst", self.brain.sanitize("WTS SSD 5k pst"))
+
+    def test_looks_like_leaked_prompt_is_conservative(self):
+        # Ordinary lines that merely start with a lowercase word or contain a colon mid-sentence are kept.
+        self.assertFalse(self.brain.looks_like_leaked_prompt("my role: tank, need a healer"))
+        self.assertFalse(self.brain.looks_like_leaked_prompt("lf party cruma pst"))
+
+
+class LocalSayHistoryTests(unittest.TestCase):
+    """SAY history is proximity-scoped: each location label keeps its own deque, so chat in one town never
+    surfaces as context in another."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.brain = load_brain_module()
+
+    def setUp(self):
+        self.brain.say_logs.clear()
+
+    def test_say_key_normalizes_location(self):
+        self.assertEqual("in giran", self.brain._say_key("in Giran"))
+        self.assertEqual("_unknown", self.brain._say_key(""))
+        self.assertEqual("_unknown", self.brain._say_key(None))
+
+    def test_say_logs_are_isolated_by_location(self):
+        self.brain.say_logs[self.brain._say_key("in Giran")].append("Ann: wts ss")
+        self.brain.say_logs[self.brain._say_key("near Dion")].append("Bob: lf party")
+        giran = list(self.brain.say_logs[self.brain._say_key("in Giran")])
+        dion = list(self.brain.say_logs[self.brain._say_key("near Dion")])
+        self.assertIn("Ann: wts ss", giran)
+        self.assertNotIn("Ann: wts ss", dion)
+        self.assertIn("Bob: lf party", dion)
+        self.assertNotIn("Bob: lf party", giran)
+
+
+class ConversationTtlTests(unittest.TestCase):
+    """The (player, bot) whisper map is pruned once a conversation has been idle past the TTL; persistent
+    player memory is unaffected."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.brain = load_brain_module()
+
+    def setUp(self):
+        self.brain.conversations.clear()
+        self.brain._conversation_seen.clear()
+
+    def test_conversation_for_returns_stable_deque(self):
+        first = self.brain.conversation_for("PlayerOne", "Mirella")
+        first.append({"role": "user", "content": "hi"})
+        second = self.brain.conversation_for("PlayerOne", "Mirella")
+        self.assertIs(first, second)
+        self.assertEqual(1, len(second))
+
+    def test_idle_conversations_are_pruned(self):
+        hist = self.brain.conversation_for("PlayerOne", "Mirella")
+        hist.append({"role": "user", "content": "hi"})
+        # Backdate the last-access time past the TTL, then touch a different conversation to trigger pruning.
+        key = ("PlayerOne", "Mirella")
+        self.brain._conversation_seen[key] = time.time() - self.brain.CONVERSATION_TTL_SECONDS - 10
+        self.brain.conversation_for("PlayerTwo", "Bob")
+        self.assertNotIn(key, self.brain.conversations)
+        self.assertNotIn(key, self.brain._conversation_seen)
+
+    def test_active_conversation_survives_prune(self):
+        key = ("PlayerOne", "Mirella")
+        self.brain.conversation_for(*key)
+        self.brain.conversation_for("PlayerTwo", "Bob")
+        self.assertIn(key, self.brain.conversations)
 
 
 if __name__ == "__main__":

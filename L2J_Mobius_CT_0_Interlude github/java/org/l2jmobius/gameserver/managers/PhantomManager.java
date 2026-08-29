@@ -47,11 +47,13 @@ import org.l2jmobius.commons.database.DatabaseFactory;
 import org.l2jmobius.commons.threads.ThreadPool;
 import org.l2jmobius.commons.util.IXmlReader;
 import org.l2jmobius.commons.util.Rnd;
+import org.l2jmobius.gameserver.ai.Action;
 import org.l2jmobius.gameserver.ai.Intention;
 import org.l2jmobius.gameserver.config.custom.AutoPlayConfig;
 import org.l2jmobius.gameserver.data.sql.CharInfoTable;
 import org.l2jmobius.gameserver.data.xml.ExperienceData;
 import org.l2jmobius.gameserver.data.xml.ItemData;
+import org.l2jmobius.gameserver.data.xml.PhantomPlaystyleData;
 import org.l2jmobius.gameserver.data.xml.PlayerTemplateData;
 import org.l2jmobius.gameserver.data.xml.SkillData;
 import org.l2jmobius.gameserver.geoengine.GeoEngine;
@@ -68,6 +70,7 @@ import org.l2jmobius.gameserver.model.actor.holders.player.AutoPlaySettingsHolde
 import org.l2jmobius.gameserver.model.clan.Clan;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoUseSettingsHolder;
 import org.l2jmobius.gameserver.model.actor.holders.player.ClassType;
+import org.l2jmobius.gameserver.model.actor.instance.Chest;
 import org.l2jmobius.gameserver.model.actor.instance.Monster;
 import org.l2jmobius.gameserver.model.actor.templates.PlayerTemplate;
 import org.l2jmobius.gameserver.model.effects.EffectType;
@@ -82,6 +85,7 @@ import org.l2jmobius.gameserver.model.item.type.ArmorType;
 import org.l2jmobius.gameserver.model.item.type.CrystalType;
 import org.l2jmobius.gameserver.model.item.type.EtcItemType;
 import org.l2jmobius.gameserver.model.item.type.WeaponType;
+import org.l2jmobius.gameserver.model.skill.AbnormalType;
 import org.l2jmobius.gameserver.model.skill.Skill;
 import org.l2jmobius.gameserver.model.skill.targets.TargetType;
 import org.l2jmobius.gameserver.network.GameClient;
@@ -139,6 +143,22 @@ public class PhantomManager implements IXmlReader
 	// AutoPlay auto-action id for the basic melee attack. Without it, AutoPlay treats the character as a
 	// mage caster that never auto-hits (see AutoPlayTaskManager.isMageCaster).
 	private static final int AUTO_ATTACK_ACTION = 2;
+	// Emergency / panic self-buffs a phantom must NOT auto-maintain as ordinary buff upkeep. These are
+	// situational, long-cooldown "panic buttons": several root or immobilize the caster (Ultimate Defense and
+	// the barriers apply an ImmobileBuff), some can only be cast at low HP (Guts/Frenzy = PINCH), and all waste a
+	// multi-minute reuse if popped on trash at full HP - which is how a tank ended up standing frozen out of
+	// combat with Ultimate Defense running. They belong to the manager survival layer and the playstyle PANIC
+	// entries, which fire them only when actually needed. Matched by abnormal type so no per-skill id list is
+	// needed; offensive damage steroids (Snipe/Rapid Fire/Dead Eye, War Cry, Rage, ...) are deliberately kept.
+	private static final Set<AbnormalType> PANIC_SELF_BUFFS = EnumSet.of(AbnormalType.PD_UP_SPECIAL, AbnormalType.AVOID_UP_SPECIAL, AbnormalType.INVINCIBILITY, AbnormalType.ULTIMATE_BUFF, AbnormalType.HERO_BUFF, AbnormalType.PINCH, AbnormalType.RESURRECTION_SPECIAL, AbnormalType.MIRAGE, AbnormalType.AVOID_SKILL, AbnormalType.COUNTER_SKILL, AbnormalType.FORCE_MEDITATION);
+	// Own-MP floor for a field hunter driving its class playstyle: below this percent the engine skips
+	// spending skills (PANIC/LIMIT survival casts are exempt) so a hunter keeps enough MP to auto-attack
+	// instead of going fully OOM. Recruited members use their own per-role reserve in PhantomPartyManager.
+	private static final int HUNTER_MP_RESERVE = 15;
+	// Retaliation anti-thrash: a hunter waits at least this long between target switches to an attacker, and
+	// never abandons a current target already at/below the near-kill HP percent (finish the kill first).
+	private static final long RETARGET_COOLDOWN = 4000;
+	private static final int RETALIATE_NEAR_KILL_PERCENT = 15;
 	// How many soulshots to hand a freshly geared phantom (no runtime restock yet).
 	private static final int SHOT_COUNT = 5000;
 	// Arrows handed to an archer so its bow can actually fire (a bow with no ammunition does nothing). Big stack
@@ -249,10 +269,15 @@ public class PhantomManager implements IXmlReader
 	// nearest mobs the instant they spawn. DISPERSE_MIN_RADIUS_PCT is the closest-to-edge they aim for.
 	private static final long DISPERSE_DURATION = 4500;
 	private static final double DISPERSE_MIN_RADIUS_PCT = 0.55;
-	// Caster looting: after a kill a mage walks to the corpse so the auto-pickup (which it can't reach from
-	// cast range) grabs the drop; the walk ends on arrival or after the cap.
+	// Caster looting: after a kill a mage walks to the corpse so it can reach the drop (it can't from cast range);
+	// the walk ends on arrival or after the cap.
 	private static final int LOOT_WALK_RANGE = 180;
 	private static final long LOOT_WALK_MAX = 6000;
+	// Post-kill looting: the hunt loop collects drops itself (the native AutoPlay pickup only fires when a phantom
+	// has no target, which the hunt loop almost never lets happen). Scan radius for reachable drops around the
+	// phantom, and the distance within which it stops moving and picks one up.
+	private static final int LOOT_SCAN_RANGE = 250;
+	private static final int LOOT_PICKUP_RANGE = 40;
 
 	// Body slots a phantom is geared in. R_HAND = sword; the rest are LIGHT/HEAVY armor pieces.
 	private static final BodyPart[] GEAR_SLOTS =
@@ -933,13 +958,18 @@ public class PhantomManager implements IXmlReader
 		int idleTargetTicks; // stuck with a target but no movement/attack/cast
 		boolean dispersing; // initial fan-out before hunting begins
 		long disperseUntil; // when dispersal ends and the auto-hunt starts
-		long huntPauseUntil; // post-kill breather: paused, standing, until this time (0 = hunting)
+		long huntPauseUntil; // post-kill breather: minimum pause (also the loot-collect window) until this time (0 = hunting)
+		long lootCapAt; // hard cap on the post-kill loot phase, so a phantom never chases unreachable loot forever
 		int claimedOid; // object id of the monster this phantom currently owns (0 = none)
 		int lastMobX; // last known position of the engaged mob, so a caster can walk to the loot after a kill
 		int lastMobY;
 		volatile boolean buddyEngaged; // buddy is partied/claimed by a player: skip the proximity despawn (grace)
 		volatile boolean recruited; // recruited combat party member: PhantomPartyManager owns it; skip ALL hunter logic
 		int friendOwnerId; // objectId of the real player this regular was login-spawned to accompany (0 = not a friend spawn)
+		PhantomPlaystyleEngine.PlayState play; // hunter-owned playstyle runtime (null until this fighter is parked; see parkHunterPlaystyle)
+		boolean playstyleParked; // this fighter's offensive AutoUse was handed to the playstyle engine (restored on teardown/adopt)
+		long nextRetargetAt; // earliest time this hunter may switch target to a fresh attacker again (retaliation hysteresis)
+		long nextDbgAt; // throttle for the per-tick hunter debug trace (only used while PhantomPartyManager.DEBUG is on)
 
 		PhantomData(Player player, Location home, Population population, boolean mage, BuddyRole role)
 		{
@@ -1008,6 +1038,7 @@ public class PhantomManager implements IXmlReader
 			_craftedFriends.clear();
 		}
 		parseDatapackFile("data/PhantomPopulations.xml");
+		parseGeneratedHuntingZones();
 		LOGGER.info(getClass().getSimpleName() + ": Loaded " + _populations.size() + " phantom population(s), " + _craftedFriends.size() + " crafted-friend order(s).");
 		if (!_populations.isEmpty() || !_craftedFriends.isEmpty())
 		{
@@ -1034,12 +1065,38 @@ public class PhantomManager implements IXmlReader
 			_craftedFriends.clear();
 		}
 		parseDatapackFile("data/PhantomPopulations.xml");
+		parseGeneratedHuntingZones();
 		if (!_populations.isEmpty() || !_craftedFriends.isEmpty())
 		{
 			startSupervising();
 		}
 		LOGGER.info(getClass().getSimpleName() + ": Reloaded PhantomPopulations.xml: " + _populations.size() + " population(s), " + _craftedFriends.size() + " crafted-friend order(s); " + removed + " phantom(s) despawned.");
 		return "Reloaded: " + _populations.size() + " population(s), " + _craftedFriends.size() + " friend order(s). " + removed + " phantom(s) despawned; zones redeploy on approach, friends rejoin in ~15s. Note: recruited parties/buddies do NOT respawn - re-recruit/re-summon them.";
+	}
+
+	/**
+	 * Additively parses the auto-generated field-hunter zones ({@code data/PhantomPopulations.generated.xml},
+	 * produced by {@code tools/build_populations.py}) into the same {@link #_populations} list as the authored
+	 * file, when {@code PhantomAutoHuntingZones} is enabled. This runs AFTER the authored file, so hand-authored
+	 * buddies, regulars, and crafted friends are parsed first and are never overwritten - the generated set only
+	 * adds plain field-hunter zones. Off by default: with the toggle disabled (or the file absent) behavior is
+	 * exactly the authored-only set. Uses the same on-demand parse path, so a world-wide generated set is idle-cheap.
+	 */
+	private void parseGeneratedHuntingZones()
+	{
+		if (!FakePlayersConfig.FAKE_PLAYER_AUTO_HUNTING_ZONES)
+		{
+			return;
+		}
+		final File generated = new File(".", "data/PhantomPopulations.generated.xml");
+		if (!generated.exists())
+		{
+			LOGGER.info(getClass().getSimpleName() + ": PhantomAutoHuntingZones is enabled but data/PhantomPopulations.generated.xml is missing - run tools/build_populations.py to generate it.");
+			return;
+		}
+		final int before = _populations.size();
+		parseFile(generated);
+		LOGGER.info(getClass().getSimpleName() + ": PhantomAutoHuntingZones: +" + (_populations.size() - before) + " auto-generated hunting zone(s) from PhantomPopulations.generated.xml.");
 	}
 
 	@Override
@@ -1879,6 +1936,15 @@ public class PhantomManager implements IXmlReader
 	 */
 	private Player createAndSpawn(Location location, int level, Population population)
 	{
+		return createAndSpawn(location, level, population, 0);
+	}
+
+	/**
+	 * @param forcedClassId when greater than 0 (and this is not a buddy/regular spawn), pins the phantom to this
+	 *            exact class instead of rolling one - used by the admin spawn command for targeted class testing.
+	 */
+	private Player createAndSpawn(Location location, int level, Population population, int forcedClassId)
+	{
 		if (_phantoms.size() >= MAX_PHANTOMS)
 		{
 			return null; // safety ceiling reached
@@ -1911,6 +1977,13 @@ public class PhantomManager implements IXmlReader
 			else if ((regular != null) && (regular.classId > 0))
 			{
 				classId = regular.classId;
+				mage = isMageClass(classId);
+			}
+			else if (forcedClassId > 0)
+			{
+				// Admin-pinned class for targeted testing (e.g. spawn a Sword Singer). transferClass is idempotent
+				// per tier, so a phantom created already at its target class stays that class at a matching level.
+				classId = forcedClassId;
 				mage = isMageClass(classId);
 			}
 			else
@@ -2090,11 +2163,24 @@ public class PhantomManager implements IXmlReader
 	 */
 	public Player spawnPhantom(Location location, int level)
 	{
+		return spawnPhantom(location, level, 0);
+	}
+
+	/**
+	 * Spawns a single ad-hoc phantom, optionally pinned to a specific class instead of the random roll - for
+	 * targeted testing (for example a Sword Singer hunter). {@code classId} 0 keeps the normal random pick.
+	 * @param location where to spawn
+	 * @param level the level to bring it to
+	 * @param classId the exact {@link PlayerClass} id to spawn, or 0 to roll a random class
+	 * @return the spawned phantom, or {@code null} on failure
+	 */
+	public Player spawnPhantom(Location location, int level, int classId)
+	{
 		if (!AutoPlayConfig.ENABLE_AUTO_PLAY)
 		{
 			LOGGER.warning(getClass().getSimpleName() + ": EnableAutoPlay is false in config/Custom/AutoPlay.ini - phantoms will spawn but not hunt.");
 		}
-		return createAndSpawn(location, level, null);
+		return createAndSpawn(location, level, null, classId);
 	}
 
 	/**
@@ -2139,7 +2225,13 @@ public class PhantomManager implements IXmlReader
 		// chained skills resolve.
 		transferClass(phantom, level, mage);
 		learnAllSkills(phantom);
-		gear(phantom, level, mage);
+		// Class-aware loadout via the same role-driven path recruited members and friends use, so a field hunter
+		// carries its real class weapon (dagger for a dagger class, dual swords for a Dancer, bow for an archer,
+		// fist for a monk, ...) instead of the old sword-for-every-fighter ambient pick. This matters now that field
+		// hunters run their class playstyles: several class skills hard-require a specific weapon (dances need
+		// equipped dual swords, dagger skills need a dagger), so the wrong weapon silently blocked those casts.
+		buildGear();
+		gearParty(phantom, level, mage, roleForClass(phantom.getPlayerClass()));
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
 		registerAutoSkills(phantom);
@@ -3140,6 +3232,13 @@ public class PhantomManager implements IXmlReader
 			// Self-buffs: lasting, beneficial, cast on self.
 			if (skill.isContinuous() && !skill.isDebuff() && (skill.getEffectPoint() >= 0) && (skill.getTargetType() == TargetType.SELF))
 			{
+				// ...except emergency/panic self-buttons (Ultimate Defense and friends), which must not be kept up as
+				// plain buff upkeep - see PANIC_SELF_BUFFS. The manager survival layer / playstyle PANIC entries fire
+				// those when they are actually needed.
+				if (PANIC_SELF_BUFFS.contains(skill.getAbnormalType()))
+				{
+					continue;
+				}
 				autoUse.getAutoBuffs().add(skill.getId());
 			}
 			// Offensive actives: instant (non-continuous) harmful skills used on the target.
@@ -3154,7 +3253,7 @@ public class PhantomManager implements IXmlReader
 	 * Configures the auto-hunt preferences and starts the native AutoPlay + AutoUse tasks. Soulshots
 	 * would be registered here too (via {@code addAutoSoulShot}) once phantoms are geared with a weapon.
 	 */
-	private void enableAutoHunt(Player phantom, boolean mage)
+	private void enableAutoHunt(Player phantom, boolean mage, PhantomData data)
 	{
 		final AutoPlaySettingsHolder settings = phantom.getAutoPlaySettings();
 		settings.setNextTargetMode(TARGET_MODE_MONSTER);
@@ -3175,8 +3274,203 @@ public class PhantomManager implements IXmlReader
 			phantom.getAutoUseSettings().getAutoActions().add(AUTO_ATTACK_ACTION);
 		}
 
+		// Hand a field hunter's offensive casting to the shared playstyle engine (once) before the AutoUse task
+		// starts, so the round-robin dump never fires a nuke in the window between start and park. Fighters cast from
+		// the assign tick, mages from the mage tick. No-op for classes without a generic playstyle, or an already
+		// parked hunter (see parkHunterPlaystyle).
+		parkHunterPlaystyle(phantom, data);
+
 		AutoPlayTaskManager.getInstance().startAutoPlay(phantom);
 		AutoUseTaskManager.getInstance().startAutoUseTask(phantom);
+	}
+
+	/**
+	 * Hands a field FIGHTER's offensive casting to the shared {@link PhantomPlaystyleEngine} when its class has a
+	 * generic (role-less) playstyle, exactly as {@link PhantomPartyManager} does for recruited members: the engine's
+	 * listed offensive skills (and any PANIC/LIMIT self-buffs) are pulled out of AutoUse so the native round-robin
+	 * dump can't compete with the engine's paced, condition-gated decisions, while auto-attack, shots and potions
+	 * stay on AutoUse (a fighter); a mage's nukes are likewise parked and driven from the mage tick instead of AutoUse.
+	 * Idempotent and additive:
+	 * <ul>
+	 * <li>Feature off, a buddy, or a recruited member - never parked (the party manager owns recruits/buddies).</li>
+	 * <li>A class with no generic playstyle - not parked, so it stays on exactly today's AutoUse behavior.</li>
+	 * <li>A low-level phantom whose listed skills are all still unlearned - parkAutoSkills self-guards and leaves
+	 * AutoUse intact (so a mage still nukes via AutoUse, a fighter still auto-uses), never parked into silence.</li>
+	 * <li>Already parked - a no-op (a reload re-park is handled by syncParkingIfReloaded in the combat tick).</li>
+	 * </ul>
+	 */
+	private void parkHunterPlaystyle(Player phantom, PhantomData data)
+	{
+		if (!FakePlayersConfig.PHANTOM_HUNTER_PLAYSTYLES || data.role.isBuddy() || data.recruited || data.playstyleParked)
+		{
+			return;
+		}
+		if (PhantomPlaystyleData.getInstance().getPlaystyle(phantom.getPlayerClass().getId(), null) == null)
+		{
+			return; // no generic rotation for this class - leave it on native AutoUse (unchanged behavior)
+		}
+		if (data.play == null)
+		{
+			data.play = new PhantomPlaystyleEngine.PlayState();
+		}
+		// roleName null resolves each class's generic style; parkAutoSkills self-guards (leaves AutoUse intact) when
+		// the playstyle can field nothing at this level, so a low-level hunter is never parked into silence.
+		PhantomPlaystyleEngine.parkAutoSkills(phantom, data.play, null);
+		data.playstyleParked = true;
+	}
+
+	/**
+	 * Returns a field fighter's engine-parked offensive skills and self-buffs to AutoUse (the inverse of
+	 * {@link #parkHunterPlaystyle}). Called on teardown and, importantly, when a friend-regular is adopted into a
+	 * party - so {@link PhantomPartyManager}'s own parkAutoSkills captures the full AutoUse list, not an already
+	 * emptied one. A no-op when the hunter was never parked.
+	 */
+	private void unparkHunterPlaystyle(Player phantom, PhantomData data)
+	{
+		if (!data.playstyleParked || (data.play == null))
+		{
+			return;
+		}
+		PhantomPlaystyleEngine.unparkAutoSkills(phantom, data.play);
+		data.playstyleParked = false;
+	}
+
+	/**
+	 * One playstyle decision for a field hunter against its claimed {@code focus}: asks the shared engine for the
+	 * first listed skill whose moment has come and hand-casts it with the same guards the party uses, then restores
+	 * the mob as the target so combat bookkeeping (and, for a fighter, native AutoPlay auto-attack) stays on the focus
+	 * even after a self-cast. When the engine has nothing this tick a fighter is kept swinging via
+	 * {@link #keepMeleeAttacking} (the melee loop is otherwise left wedged after a cast) and a mage just waits for its
+	 * next listed skill. Called for fighters from the assign tick (once they own a focus) and for mages from the mage
+	 * tick (once at casting range); buddies and recruited members are excluded upstream by their own ticks.
+	 */
+	private void tryHunterPlaystyle(Player phantom, Monster focus, PhantomData data)
+	{
+		if (!data.playstyleParked || (data.play == null))
+		{
+			return;
+		}
+		// Live off-switch: a config reload that turned the feature off hands casting straight back to AutoUse on the
+		// next tick, so the previous field-hunter behavior returns without waiting for the zone to cycle or a rebuild.
+		if (!FakePlayersConfig.PHANTOM_HUNTER_PLAYSTYLES)
+		{
+			unparkHunterPlaystyle(phantom, data);
+			return;
+		}
+		if (phantom.isCastingNow() || phantom.isCastingSimultaneouslyNow())
+		{
+			hunterDbg(phantom, focus, data, "casting");
+			return; // a cast is in flight; the swing resumes on a later no-cast tick
+		}
+		if (phantom.isSitting())
+		{
+			hunterDbg(phantom, focus, data, "sitting");
+			return;
+		}
+		// Movement-locked (rooted/held) blocks repositioning and casting, but a melee can still swing where it stands,
+		// so only the cast attempt is skipped - the attack-keeper below still runs (a real stun is caught by doAttack's
+		// own isAttackDisabled, so it never swings early).
+		if (!phantom.isMovementDisabled())
+		{
+			// React to a //phantom playstyle reload that added or removed this class's style before deciding.
+			PhantomPlaystyleEngine.syncParkingIfReloaded(phantom, data.play, null);
+			// Solo hunter: no party healer to gate LIMIT entries (healerReady false); underAttack drives PANIC self-buffs.
+			final PhantomPlaystyleEngine.CastAction action = PhantomPlaystyleEngine.pick(phantom, focus, data.play, false, underAttack(phantom), HUNTER_MP_RESERVE, null);
+			if (action != null)
+			{
+				phantom.setTarget(action.target);
+				phantom.doCast(action.skill);
+				// Commit a once-per-target opener to the ledger only after the cast actually launched (mirrors the party)
+				// - a cast the core rejected stays retryable next tick instead of being burned for the life of this target.
+				if (phantom.isCastingNow() || phantom.isCastingSimultaneouslyNow())
+				{
+					PhantomPlaystyleEngine.confirmCast(data.play, action);
+				}
+				hunterDbg(phantom, focus, data, "cast " + action.skill.getName() + (action.target == phantom ? " (self)" : ""));
+				// Restore the mob as the target so the assign claim bookkeeping (and the attack-keeper below, next tick)
+				// stay on the focus after a self-cast. Creature.beginCast already snapshotted the launched cast's own
+				// target, so this can't abort it.
+				if (action.target != focus)
+				{
+					phantom.setTarget(focus);
+				}
+				return; // cast this tick; the swing resumes next tick via the attack-keeper
+			}
+		}
+		// No skill cast this tick. A FIGHTER must keep swinging between skills: after a doCast the melee loop is left
+		// wedged (the AI still INTENDS attack on the focus but has no swing scheduled), and native AutoPlay will not
+		// relaunch it because the intention is already ATTACK. Re-arm it here. A mage does not melee - it just waits
+		// for its next listed skill.
+		hunterDbg(phantom, focus, data, phantom.isMovementDisabled() ? "move-locked" : "no-pick");
+		if (!data.mage)
+		{
+			keepMeleeAttacking(phantom, focus);
+		}
+	}
+
+	/**
+	 * Keeps a parked FIGHTER swinging between engine skill casts. After a {@code doCast} the melee loop is interrupted
+	 * and the AI is left INTENDING attack on the focus with no swing scheduled; re-issuing
+	 * {@code setIntention(ATTACK, focus)} then no-ops, because {@code CreatureAI} treats "already ATTACK on this target"
+	 * as nothing to do, so the fighter stands idle taking hits until some other event disturbs its intention. This
+	 * mirrors the party's ATTACK-RESUME fix ({@link PhantomPartyManager}): in that wedged state poke {@code THINK} to
+	 * relaunch the swing ({@code doAttack} self-guards via {@code isAttackDisabled}, so it can never swing early - e.g.
+	 * while stunned); any other case engages/retargets normally through {@code setIntention}.
+	 */
+	private void keepMeleeAttacking(Player phantom, Monster focus)
+	{
+		if (phantom.isCastingNow() || phantom.isCastingSimultaneouslyNow())
+		{
+			return; // let a real cast finish; the swing resumes on a later tick
+		}
+		if (phantom.isAttackingNow() && (phantom.getTarget() == focus))
+		{
+			return; // already mid-swing on the focus - nothing to do (isAttackingNow stays true across the attack interval)
+		}
+		phantom.setTarget(focus);
+		phantom.setRunning();
+		if ((phantom.getAI().getIntention() == Intention.ATTACK) && (phantom.getAI().getAttackTarget() == focus))
+		{
+			phantom.getAI().notifyAction(Action.THINK); // the wedge: relaunch the interrupted swing
+		}
+		else
+		{
+			phantom.getAI().setIntention(Intention.ATTACK, focus); // fresh engage / retarget relaunches on its own
+		}
+	}
+
+	/**
+	 * Per-tick combat trace for one field fighter, gated on the same {@code //debug_on} toggle the party tracer uses
+	 * ({@link PhantomPartyManager#DEBUG}) and throttled per phantom so a single watched hunter stays readable. Prints
+	 * the state that explains a stall - distance to focus, AI intention, attacking/moving/casting flags, under-attack,
+	 * HP/MP - plus what the engine decided this tick ({@code note}). Off entirely when DEBUG is off.
+	 */
+	private void hunterDbg(Player phantom, Monster focus, PhantomData data, String note)
+	{
+		if (!PhantomPartyManager.DEBUG)
+		{
+			return;
+		}
+		final long now = System.currentTimeMillis();
+		if (now < data.nextDbgAt)
+		{
+			return;
+		}
+		data.nextDbgAt = now + 1200;
+		LOGGER.info("HUNTER '" + phantom.getName() + "' (" + phantom.getPlayerClass() + ") foc='" + focus.getName() + "' d=" + (int) phantom.calculateDistance2D(focus) + " int=" + phantom.getAI().getIntention() + " atk=" + phantom.isAttackingNow() + " mov=" + phantom.isMoving() + " cast=" + phantom.isCastingNow() + " ua=" + underAttack(phantom) + " hp=" + phantom.getCurrentHpPercent() + "% mp=" + phantom.getCurrentMpPercent() + "% -> " + note);
+	}
+
+	/** @return true if a live monster within danger range is currently targeting this phantom (feeds PANIC playstyle entries). */
+	private static boolean underAttack(Player phantom)
+	{
+		for (Monster monster : World.getInstance().getVisibleObjectsInRange(phantom, Monster.class, REST_DANGER_RANGE))
+		{
+			if (!monster.isDead() && (monster.getTarget() == phantom))
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** Despawns and forgets every phantom (also deletes their DB rows). */
@@ -3212,6 +3506,9 @@ public class PhantomManager implements IXmlReader
 		// isRegular (not a raw account check) so a phantom promoted THIS session - whose final in-memory
 		// account still reads 'phantom' - is recognized and its row kept too.
 		final boolean persistent = isRegular(data.player);
+		// Return any engine-parked offensive skills to AutoUse before the phantom leaves, so a persistent regular
+		// that respawns (or is reused) does not come back with an emptied AutoUse. No-op for an unparked phantom.
+		unparkHunterPlaystyle(data.player, data);
 		// Drop any bot-clan membership BEFORE storeMe() so a persistent regular's saved character row keeps clanid 0
 		// (bot-clan membership is runtime-only and rebuilt each spawn, never written to the characters table).
 		BotClanManager.getInstance().detach(data.player);
@@ -3548,6 +3845,10 @@ public class PhantomManager implements IXmlReader
 		{
 			return role; // already adopted (re-invite within the same party session)
 		}
+		// This friend-regular may have been running as a field hunter with its offensive AutoUse parked to the
+		// playstyle engine. Restore it BEFORE the party takes over, so PhantomPartyManager's own parkAutoSkills
+		// captures the full AutoUse list instead of an already emptied one (otherwise release would not restore it).
+		unparkHunterPlaystyle(friend, data);
 		AutoPlayTaskManager.getInstance().stopAutoPlay(friend);
 		if (friend.isSitting())
 		{
@@ -3675,7 +3976,9 @@ public class PhantomManager implements IXmlReader
 
 	/**
 	 * Keeps awake mage phantoms at casting range of their target and kites them out when low on MP, since
-	 * the native AutoPlay never moves a pure caster. AutoUse does the actual nuking once they're in range.
+	 * the native AutoPlay never moves a pure caster. Once in range the nuke is cast by the playstyle engine when the
+	 * mage's class has a generic playstyle (its offensive AutoUse is parked, exactly like a party caster); a mage
+	 * without a playstyle, or one too low-level to field its listed skills, keeps nuking via AutoUse instead.
 	 */
 	private void mageCombat()
 	{
@@ -3718,14 +4021,22 @@ public class PhantomManager implements IXmlReader
 				// backing off, without ever sitting), resume it now.
 				if (!mage.isAutoPlaying())
 				{
-					enableAutoHunt(mage, true);
+					enableAutoHunt(mage, true, data);
 				}
 				final WorldObject target = mage.getTarget();
 				if (!(target instanceof Monster) || ((Monster) target).isDead())
 				{
 					continue; // AutoPlay will pick a target; nothing to position around yet
 				}
-				positionMage(mage, (Monster) target);
+				final Monster focus = (Monster) target;
+				positionMage(mage, focus);
+				// Once at casting range, drive the nuke through the engine (offensive AutoUse is parked for a mage with
+				// a playstyle, same as a party caster). Out of range, positionMage is walking it in and this is skipped;
+				// tryHunterPlaystyle no-ops for an unparked mage, so a no-playstyle caster keeps its AutoUse nuking.
+				if (mage.calculateDistance2D(focus) <= (MAGE_CAST_RANGE + MAGE_RANGE_TOLERANCE))
+				{
+					tryHunterPlaystyle(mage, focus, data);
+				}
 			}
 			catch (Exception e)
 			{
@@ -3839,16 +4150,19 @@ public class PhantomManager implements IXmlReader
 					continue;
 				}
 
-				// Post-kill breather: a fighter stands still; a mage is walking to its drop. Resume the hunt when
-				// the timer elapses, or as soon as a looting mage reaches the corpse (then AutoPlay's pickup,
-				// which it prioritises over re-targeting, grabs the drop).
+				// Post-kill breather + looting: a fighter is already on the corpse; a mage was sent to walk to it.
+				// Collect the drops here (adena + items) rather than relying on the native AutoPlay pickup, which is
+				// starved because the hunt loop re-assigns a target the instant the breather ends. Resume the hunt once
+				// the minimum pause has elapsed and there is nothing left to collect (nor a mage still en route), or
+				// when the hard loot cap is hit.
 				if (data.huntPauseUntil > 0)
 				{
-					final boolean reachedLoot = data.mage && (Math.hypot(phantom.getX() - data.lastMobX, phantom.getY() - data.lastMobY) <= LOOT_WALK_RANGE);
-					if (reachedLoot || (now >= data.huntPauseUntil))
+					final boolean enRoute = data.mage && ((data.lastMobX != 0) || (data.lastMobY != 0)) && (Math.hypot(phantom.getX() - data.lastMobX, phantom.getY() - data.lastMobY) > LOOT_WALK_RANGE);
+					final boolean looting = grabLoot(phantom);
+					if ((!enRoute && !looting && (now >= data.huntPauseUntil)) || (now >= data.lootCapAt))
 					{
 						data.huntPauseUntil = 0;
-						enableAutoHunt(phantom, data.mage);
+						enableAutoHunt(phantom, data.mage, data);
 						needsTarget.add(data);
 					}
 					continue;
@@ -3884,6 +4198,34 @@ public class PhantomManager implements IXmlReader
 					needsTarget.add(data);
 					continue;
 				}
+				// Retaliation: turn on a mob that is attacking this hunter while it IGNORES it - typically an add that
+				// jumped the hunter while it was running to a not-yet-engaged target. Only when the current focus is
+				// NOT itself already fighting the hunter: once the hunter is trading blows with a mob, a second mob
+				// also on it is not a reason to keep flipping targets (that ping-pongs forever between two attackers,
+				// since each becomes the other's "attacker" the moment it stops being the focus). The switch also
+				// respects the anti-thrash cooldown and never abandons a near-kill. It goes through the same yield +
+				// owner-claim path as normal hunting, so mob spread and player deference are preserved; fighters engage
+				// now, a mage just takes the target (its tick positions and nukes it).
+				if (FakePlayersConfig.PHANTOM_HUNTER_RETALIATE && (monster.getTarget() != phantom) && (now >= data.nextRetargetAt) && (monster.getCurrentHpPercent() > RETALIATE_NEAR_KILL_PERCENT))
+				{
+					final Monster attacker = nearestAttacker(phantom, owner, monster);
+					if (attacker != null)
+					{
+						yieldTarget(phantom); // drop the old focus (it was not yet claimed by us this tick)
+						final int attackerId = attacker.getObjectId();
+						owner.put(attackerId, phantom);
+						data.claimedOid = attackerId;
+						data.nextRetargetAt = now + RETARGET_COOLDOWN;
+						data.lastMobX = attacker.getX();
+						data.lastMobY = attacker.getY();
+						phantom.setTarget(attacker);
+						if (!data.mage)
+						{
+							phantom.getAI().setIntention(Intention.ATTACK, attacker);
+						}
+						continue; // switched; the next tick (or the mage tick) drives combat on the new target
+					}
+				}
 				// Remember where the mob is, so a caster can walk to its drop after the kill (loot is at the
 				// corpse, well outside a mage's cast-range pickup radius).
 				data.lastMobX = monster.getX();
@@ -3913,6 +4255,13 @@ public class PhantomManager implements IXmlReader
 					yieldTarget(phantom);
 					data.claimedOid = 0;
 					needsTarget.add(data);
+				}
+				// A field fighter that owns this live focus drives its class playstyle from here (paced by the
+				// engine, so the 1s tick does not machine-gun). Mages cast from the mage tick instead (positioning
+				// first); a phantom that just yielded (claimedOid 0) is skipped - it re-acquires in pass 2 first.
+				if (!data.mage && (data.claimedOid == id))
+				{
+					tryHunterPlaystyle(phantom, monster, data);
 				}
 			}
 			catch (Exception e)
@@ -3951,6 +4300,28 @@ public class PhantomManager implements IXmlReader
 		}
 	}
 
+	/**
+	 * Whether a phantom must never attack this monster - whether hunting on its own OR assisting a target its owner
+	 * explicitly picked. Three categories are off-limits:
+	 * <ul>
+	 * <li>fake players ({@link org.l2jmobius.gameserver.model.actor.Npc#isFakePlayer()}): living-world population -
+	 * shopkeepers, wanderers - not mobs. Attacking one flags the phantom for PvP and is never intended, even when the
+	 * owner clicks it;</li>
+	 * <li>treasure boxes (a {@link Chest} where {@link Chest#isBox()}): openable only with a key, they just explode
+	 * and drop nothing when attacked. A mimic (a non-box {@code Chest}) is a real monster with loot, so it is NOT
+	 * excluded;</li>
+	 * <li>quest monsters ({@link org.l2jmobius.gameserver.model.actor.Npc#isQuestMonster()}): title-flagged mobs
+	 * that give no grind XP or drops.</li>
+	 * </ul>
+	 * Raid bosses stay excluded by each caller's own {@code isRaid()} gate, so they are not repeated here.
+	 * @param monster the candidate target
+	 * @return {@code true} if a phantom must not attack this monster
+	 */
+	public static boolean isPhantomForbiddenTarget(Monster monster)
+	{
+		return monster.isFakePlayer() || ((monster instanceof Chest) && ((Chest) monster).isBox()) || monster.isQuestMonster();
+	}
+
 	/** @return the nearest live, auto-attackable monster not already claimed this tick (nor fought by a player). */
 	private Monster nearestFreeMonster(Player phantom, Map<Integer, Player> claimed)
 	{
@@ -3958,7 +4329,7 @@ public class PhantomManager implements IXmlReader
 		double bestDistance = Double.MAX_VALUE;
 		for (Monster monster : World.getInstance().getVisibleObjectsInRange(phantom, Monster.class, AutoPlayConfig.AUTO_PLAY_LONG_RANGE))
 		{
-			if (monster.isDead() || monster.isAlikeDead() || claimed.containsKey(monster.getObjectId()) || isContestedByPlayer(monster))
+			if (monster.isDead() || monster.isAlikeDead() || claimed.containsKey(monster.getObjectId()) || isContestedByPlayer(monster) || isPhantomForbiddenTarget(monster))
 			{
 				continue;
 			}
@@ -3977,10 +4348,42 @@ public class PhantomManager implements IXmlReader
 	}
 
 	/**
-	 * Starts a post-kill breather: stops the auto-hunt so the phantom does not instantly chain the next pull.
-	 * A fighter stands still for a short random pause (its loot is already underfoot). A mage instead walks to
-	 * the corpse it just dropped from cast range, so it ends the pause standing on the loot and the auto-pickup
-	 * collects it when the hunt resumes.
+	 * The mob a hunter should retaliate against: the nearest live, auto-attackable monster within danger range that
+	 * is currently targeting this phantom, is not its current focus, is not fought by a real player, and is not
+	 * already owned by another phantom this tick ({@code claimed}). Free-claim only on purpose - taking a mob a closer
+	 * phantom already owns would require bumping that owner mid-pass, and an attacker on this hunter is almost always
+	 * unclaimed anyway; the acquisition pass handles any residual case next tick.
+	 * @return the attacker to switch to, or {@code null} when the hunter should keep its current focus
+	 */
+	private Monster nearestAttacker(Player phantom, Map<Integer, Player> claimed, Monster currentFocus)
+	{
+		Monster best = null;
+		double bestDistance = Double.MAX_VALUE;
+		for (Monster monster : World.getInstance().getVisibleObjectsInRange(phantom, Monster.class, REST_DANGER_RANGE))
+		{
+			if (monster.isDead() || (monster == currentFocus) || (monster.getTarget() != phantom))
+			{
+				continue; // only a live OTHER mob that is actually on this phantom
+			}
+			if (claimed.containsKey(monster.getObjectId()) || isContestedByPlayer(monster) || !monster.isAutoAttackable(phantom))
+			{
+				continue; // taken by another phantom this tick, a real player's kill, or not attackable
+			}
+			final double distance = phantom.calculateDistance2D(monster);
+			if (distance < bestDistance)
+			{
+				bestDistance = distance;
+				best = monster;
+			}
+		}
+		return best;
+	}
+
+	/**
+	 * Starts a post-kill breather: stops the auto-hunt so the phantom does not instantly chain the next pull, and
+	 * opens the loot-collect window (see the breather branch in {@link #assignTargets}, which grabs the drops). A
+	 * fighter stands on the corpse it is already next to; a mage walks in from cast range so it can reach the drop.
+	 * {@code huntPauseUntil} is the minimum pause; {@code lootCapAt} is the hard cap so looting never loops forever.
 	 */
 	private void beginHuntPause(Player phantom, PhantomData data, long now)
 	{
@@ -3990,18 +4393,72 @@ public class PhantomManager implements IXmlReader
 			AutoUseTaskManager.getInstance().stopAutoUseTask(phantom);
 		}
 		phantom.setTarget(null);
+		data.huntPauseUntil = now + Rnd.get((int) POST_KILL_DELAY_MIN, (int) POST_KILL_DELAY_MAX);
+		data.lootCapAt = now + LOOT_WALK_MAX;
 		if (data.mage && ((data.lastMobX != 0) || (data.lastMobY != 0)))
 		{
-			data.huntPauseUntil = now + LOOT_WALK_MAX; // ended early on arrival (see the breather-resume check)
 			final Location loot = GeoEngine.getInstance().getValidLocation(phantom, new Location(data.lastMobX, data.lastMobY, phantom.getZ()));
 			phantom.setRunning();
 			phantom.getAI().setIntention(Intention.MOVE_TO, loot);
 		}
 		else
 		{
-			data.huntPauseUntil = now + Rnd.get((int) POST_KILL_DELAY_MIN, (int) POST_KILL_DELAY_MAX);
 			phantom.getAI().setIntention(Intention.IDLE);
 		}
+	}
+
+	/**
+	 * Collects the nearest reachable ground drop for a phantom during its post-kill loot window: walks to it and, once
+	 * close enough, picks it up. Mirrors the native AutoPlay pickup filters (spawned, not on the ignore list,
+	 * geo-reachable, and either unprotected or owned by this phantom) - needed because that native pickup only runs
+	 * when a phantom has no target, which the hunt loop almost never allows.
+	 * @return {@code true} while it is still handling a drop (moving toward one or having just picked one up), so the
+	 *         caller keeps the loot window open; {@code false} when nothing pickable is in range.
+	 */
+	private boolean grabLoot(Player phantom)
+	{
+		if (!phantom.isInventoryUnder90(false))
+		{
+			return false;
+		}
+		Item best = null;
+		double bestDistance = Double.MAX_VALUE;
+		for (Item item : World.getInstance().getVisibleObjectsInRange(phantom, Item.class, LOOT_SCAN_RANGE))
+		{
+			if ((item == null) || !item.isSpawned() || AutoPlayConfig.IGNORED_AUTO_PICK_ITEMS.contains(item.getId()))
+			{
+				continue;
+			}
+			if (item.isProtected() && (item.getOwnerId() != phantom.getObjectId()))
+			{
+				continue; // someone else's drop-protection window - not ours to take
+			}
+			if (!GeoEngine.getInstance().canMoveToTarget(phantom.getX(), phantom.getY(), phantom.getZ(), item.getX(), item.getY(), item.getZ(), phantom.getInstanceId()))
+			{
+				continue; // unreachable - skip so the loot window can close instead of looping on it
+			}
+			final double distance = phantom.calculateDistance2D(item);
+			if (distance < bestDistance)
+			{
+				bestDistance = distance;
+				best = item;
+			}
+		}
+		if (best == null)
+		{
+			return false;
+		}
+		if (bestDistance > LOOT_PICKUP_RANGE)
+		{
+			if (!phantom.isMoving())
+			{
+				phantom.setRunning();
+				phantom.getAI().setIntention(Intention.MOVE_TO, best);
+			}
+			return true; // still walking to the drop
+		}
+		phantom.doPickupItem(best);
+		return true; // picked one up (or attempted); more may remain for the next tick
 	}
 
 	/** Begins the initial fan-out: marks the phantom dispersing and sends it toward its area's perimeter. */
@@ -4211,7 +4668,7 @@ public class PhantomManager implements IXmlReader
 					if (now >= data.disperseUntil)
 					{
 						data.dispersing = false;
-						enableAutoHunt(phantom, data.mage);
+						enableAutoHunt(phantom, data.mage, data);
 					}
 					continue; // don't hunt/rest/roam while still spreading out
 				}
