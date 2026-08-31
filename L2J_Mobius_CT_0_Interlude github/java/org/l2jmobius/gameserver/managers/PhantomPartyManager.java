@@ -58,6 +58,9 @@ import org.l2jmobius.gameserver.model.events.Containers;
 import org.l2jmobius.gameserver.model.events.EventType;
 import org.l2jmobius.gameserver.model.events.holders.actor.player.inventory.OnPlayerItemAdd;
 import org.l2jmobius.gameserver.model.events.holders.actor.player.inventory.OnPlayerItemTransfer;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.trade.OnPlayerTradeCancel;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.trade.OnPlayerTradeFinish;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.trade.OnPlayerTradeStart;
 import org.l2jmobius.gameserver.model.events.listeners.ConsumerEventListener;
 import org.l2jmobius.gameserver.model.groups.Party;
 import org.l2jmobius.gameserver.model.groups.PartyDistributionType;
@@ -489,6 +492,7 @@ public class PhantomPartyManager
 		Monster nextMonsterCorpseToSweep;
 		List<Monster> targetsToSweep;
 		Map<Integer, Integer> lootingSessionItems; // Map of Item.getObjectId() to Item.getCount()
+		TradingState tradingState = TradingState.NOT_TRADING;
 		Skill survival; // lazy (TANK): Ultimate Defense, hand-cast at low HP (parked out of the auto-buff loop)
 		boolean survivalLookedUp;
 		Skill cc; // lazy (NUKER): Sleep / Dryad Root for a loose add
@@ -533,14 +537,7 @@ public class PhantomPartyManager
 			{
 				lootingSessionItems = new ConcurrentHashMap<>();
 			}
-			if (!lootingSessionItems.containsKey(item.getObjectId()))
-			{
-                lootingSessionItems.put(item.getObjectId(), 0);
-			}
-			lootingSessionItems.compute(
-					item.getObjectId(),
-					(k, currentAmount) -> currentAmount + item.getCount()
-			);
+			lootingSessionItems.put(item.getObjectId(), item.getCount());
         }
 
         public void removeItemsFromLootingSession(Item item)
@@ -549,10 +546,14 @@ public class PhantomPartyManager
 			{
 				return;
 			}
-			lootingSessionItems.compute(
-					item.getObjectId(),
-					(k, currentAmount) -> currentAmount - item.getCount()
-			);
+			if (item.getCount() == 0)
+			{
+				lootingSessionItems.remove(item.getObjectId());
+			}
+			else
+			{
+				lootingSessionItems.put(item.getObjectId(), item.getCount());
+			}
         }
 	}
 
@@ -597,6 +598,18 @@ public class PhantomPartyManager
 		}
 	}
 
+	private enum TradingState
+	{
+		NOT_TRADING,
+		IS_TRADING,
+		FINISHED,
+		CANCELLED;
+
+		boolean isDoneTrading() {
+			return this == FINISHED || this == CANCELLED;
+		}
+	}
+
 	private final ConcurrentHashMap<Integer, Member> _members = new ConcurrentHashMap<>();
 	private final ConcurrentHashMap<Integer, PartyMood> _moods = new ConcurrentHashMap<>();
 	private final ConcurrentHashMap<Integer, Camp> _camps = new ConcurrentHashMap<>();
@@ -632,10 +645,37 @@ public class PhantomPartyManager
 					this
 			);
 
+	private final ConsumerEventListener onPlayerTradeStartListener =
+			new ConsumerEventListener(
+					Containers.Players(),
+					EventType.ON_PLAYER_TRADE_START,
+					(OnPlayerTradeStart event) -> onPlayerTradeStart(event),
+					this
+			);
+
+	private final ConsumerEventListener onPlayerTradeFinishListener =
+			new ConsumerEventListener(
+					Containers.Players(),
+					EventType.ON_PLAYER_TRADE_FINISH,
+					(OnPlayerTradeFinish event) -> onPlayerTradeFinish(event),
+					this
+			);
+
+	private final ConsumerEventListener onPlayerTradeCancelListener =
+			new ConsumerEventListener(
+					Containers.Players(),
+					EventType.ON_PLAYER_TRADE_CANCEL,
+					(OnPlayerTradeCancel event) -> onPlayerTradeCancel(event),
+					this
+			);
+
 	protected PhantomPartyManager()
 	{
 		Containers.Players().addListener(addItemEventListener);
 		Containers.Players().addListener(transferItemEventListener);
+		Containers.Players().addListener(onPlayerTradeStartListener);
+		Containers.Players().addListener(onPlayerTradeFinishListener);
+		Containers.Players().addListener(onPlayerTradeCancelListener);
 	}
 
 	// ===== Recruitment =====
@@ -707,6 +747,30 @@ public class PhantomPartyManager
 		Member npc = _members.get(event.getPlayer().getObjectId());
 		if (npc != null) {
 			npc.removeItemsFromLootingSession(event.getItem());
+		}
+	}
+
+	private void onPlayerTradeStart(OnPlayerTradeStart event)
+	{
+		Member npc = _members.get(event.getSender().getObjectId());
+		if (npc != null) {
+			npc.tradingState = TradingState.IS_TRADING;
+		}
+	}
+
+	private void onPlayerTradeFinish(OnPlayerTradeFinish event)
+	{
+		Member npc = _members.get(event.getSender().getObjectId());
+		if (npc != null) {
+			npc.tradingState = TradingState.FINISHED;
+		}
+	}
+
+	private void onPlayerTradeCancel(OnPlayerTradeCancel event)
+	{
+		Member npc = _members.get(event.getReceiver().getObjectId());
+		if (npc != null) {
+			npc.tradingState = TradingState.CANCELLED;
 		}
 	}
 
@@ -1280,21 +1344,22 @@ public class PhantomPartyManager
 			return true;
 		}
 
-		if (containsAny(text, "give me spoils", "give me spoil", "give me sweep", "return spoil"))
-		{
-			Map<Integer, Integer> spoils = state.lootingSessionItems;
-			if (spoils.isEmpty()) {
-				deliver(state, "nothing to hand over yet, how about a few more mobs then?");
+		if (state.role == PartyRole.BOUNTY_HUNTER) {
+			if (containsAny(text, "give me spoils", "give me spoil", "give me sweep", "return spoil"))
+			{
+				Map<Integer, Integer> spoils = state.lootingSessionItems;
+				if (spoils.isEmpty()) {
+					deliver(state, "nothing to hand over yet, how about a few more mobs then?");
+					return true;
+				}
+				deliver(state, "here's your loot mate, have fun with it!");
+				PhantomExchangeManager.newInstance().runTrade(
+						state.npc,
+						owner,
+						spoils
+				);
 				return true;
 			}
-			deliver(state, "here's your loot mate, have fun with it!");
-			PhantomExchangeManager.newInstance().runTrade(
-					state.npc,
-					owner,
-					spoils
-			);
-			state.lootingSessionItems.clear();
-			return true;
 		}
 
 		// Support on-demand orders actually do the thing now (not just acknowledge).
@@ -2179,6 +2244,25 @@ public class PhantomPartyManager
 			return true;
 		}
 
+		if (state.role == PartyRole.BOUNTY_HUNTER) {
+			switch (state.tradingState) {
+                case IS_TRADING -> {
+					return true;
+                }
+                case FINISHED -> {
+					state.lootingSessionItems = null;
+					deliver(state, "thank you for your time boss o7");
+					state.tradingState = TradingState.NOT_TRADING;
+					return true;
+                }
+                case CANCELLED -> {
+					deliver(state, "not now, got you, back to the grind");
+					state.tradingState = TradingState.NOT_TRADING;
+					return true;
+                }
+            }
+		}
+
 		if (state.isSupport())
 		{
 			supportTick(state, now);
@@ -2589,7 +2673,6 @@ public class PhantomPartyManager
 				 {
 					 npc.getAI().setIntention(Intention.IDLE);
 					 npc.doCast(state.sweeper);
-					 deliver(state, "sweeping them: " + closestMonsterCorpse.getName());
 					 state.targetsToSweep.remove(closestMonsterCorpse);
 					 state.nextMonsterCorpseToSweep = null;
 				 }

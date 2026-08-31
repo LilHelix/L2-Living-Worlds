@@ -191,6 +191,9 @@ import org.l2jmobius.gameserver.model.events.holders.actor.player.OnPlayerProfes
 import org.l2jmobius.gameserver.model.events.holders.actor.player.OnPlayerProfessionChange;
 import org.l2jmobius.gameserver.model.events.holders.actor.player.OnPlayerPvPChanged;
 import org.l2jmobius.gameserver.model.events.holders.actor.player.OnPlayerPvPKill;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.trade.OnPlayerTradeCancel;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.trade.OnPlayerTradeFinish;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.trade.OnPlayerTradeStart;
 import org.l2jmobius.gameserver.model.events.listeners.FunctionEventListener;
 import org.l2jmobius.gameserver.model.events.returns.TerminateReturn;
 import org.l2jmobius.gameserver.model.fishing.Fish;
@@ -5879,7 +5882,7 @@ public class Player extends Playable
 		return _activeTradeList;
 	}
 	
-	public void onTradeStart(Player partner)
+	public void onTradeStart(Player partner, boolean notifyAboutStart)
 	{
 		_activeTradeList = new TradeList(this);
 		_activeTradeList.setPartner(partner);
@@ -5888,6 +5891,14 @@ public class Player extends Playable
 		msg.addPcName(partner);
 		sendPacket(msg);
 		sendPacket(new TradeStart(this));
+
+		if (notifyAboutStart && EventDispatcher.getInstance().hasListener(EventType.ON_PLAYER_TRADE_START, this))
+		{
+			EventDispatcher.getInstance().notifyEventAsync(
+					new OnPlayerTradeStart(this, partner),
+					this
+			);
+		}
 	}
 	
 	public void onTradeConfirm(Player partner)
@@ -5898,11 +5909,22 @@ public class Player extends Playable
 		sendPacket(TradeOtherDone.STATIC_PACKET);
 	}
 	
-	public void onTradeCancel(Player partner)
+	public void onTradeCancel(Player partner, boolean notifyEvent)
 	{
 		if (_activeTradeList == null)
 		{
 			return;
+		}
+
+		if (notifyEvent)
+		{
+			if (EventDispatcher.getInstance().hasListener(EventType.ON_PLAYER_TRADE_CANCEL, this))
+			{
+				EventDispatcher.getInstance().notifyEventAsync(
+						new OnPlayerTradeCancel(_activeTradeList.getOwner(), _activeTradeList.getPartner(), partner),
+						this
+				);
+			}
 		}
 		
 		_activeTradeList.lock();
@@ -5925,8 +5947,8 @@ public class Player extends Playable
 	
 	public void startTrade(Player partner)
 	{
-		onTradeStart(partner);
-		partner.onTradeStart(this);
+		onTradeStart(partner, true);
+		partner.onTradeStart(this, false);
 	}
 	
 	public void cancelActiveTrade()
@@ -5939,10 +5961,10 @@ public class Player extends Playable
 		final Player partner = _activeTradeList.getPartner();
 		if (partner != null)
 		{
-			partner.onTradeCancel(this);
+			partner.onTradeCancel(this, false);
 		}
 		
-		onTradeCancel(this);
+		onTradeCancel(this, true);
 	}
 	
 	public boolean hasManufactureShop()

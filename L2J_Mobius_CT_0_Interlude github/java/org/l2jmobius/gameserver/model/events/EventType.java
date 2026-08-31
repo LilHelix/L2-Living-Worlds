@@ -95,6 +95,9 @@ import org.l2jmobius.gameserver.model.events.holders.actor.player.inventory.OnPl
 import org.l2jmobius.gameserver.model.events.holders.actor.player.inventory.OnPlayerItemDrop;
 import org.l2jmobius.gameserver.model.events.holders.actor.player.inventory.OnPlayerItemPickup;
 import org.l2jmobius.gameserver.model.events.holders.actor.player.inventory.OnPlayerItemTransfer;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.trade.OnPlayerTradeCancel;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.trade.OnPlayerTradeFinish;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.trade.OnPlayerTradeStart;
 import org.l2jmobius.gameserver.model.events.holders.actor.trap.OnTrapAction;
 import org.l2jmobius.gameserver.model.events.holders.clan.OnClanWarFinish;
 import org.l2jmobius.gameserver.model.events.holders.clan.OnClanWarStart;
@@ -223,7 +226,10 @@ public enum EventType
 	ON_PLAYER_SUMMON_SPAWN(OnPlayerSummonSpawn.class, void.class),
 	ON_PLAYER_SUMMON_TALK(OnPlayerSummonTalk.class, void.class),
 	ON_PLAYER_TRANSFORM(OnPlayerTransform.class, void.class),
-	
+	ON_PLAYER_TRADE_START(OnPlayerTradeStart.class, void.class),
+	ON_PLAYER_TRADE_CANCEL(OnPlayerTradeCancel.class, void.class),
+	ON_PLAYER_TRADE_FINISH(OnPlayerTradeFinish.class, void.class),
+
 	// Trap events
 	ON_TRAP_ACTION(OnTrapAction.class, void.class),
 	
