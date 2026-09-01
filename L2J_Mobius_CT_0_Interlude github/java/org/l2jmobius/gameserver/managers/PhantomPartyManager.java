@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Predicate;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -604,13 +605,11 @@ public class PhantomPartyManager
 		IS_TRADING,
 		FINISHED,
 		CANCELLED;
-
-		boolean isDoneTrading() {
-			return this == FINISHED || this == CANCELLED;
-		}
 	}
 
 	private final ConcurrentHashMap<Integer, Member> _members = new ConcurrentHashMap<>();
+	private CopyOnWriteArrayList<Member> _pendingTrades = new CopyOnWriteArrayList<>();
+	private Member _currentTrading;
 	private final ConcurrentHashMap<Integer, PartyMood> _moods = new ConcurrentHashMap<>();
 	private final ConcurrentHashMap<Integer, Camp> _camps = new ConcurrentHashMap<>();
 	// Raid pull control: "all attack" force-releases an owner's party, but normal tank release is per raid mob/add.
@@ -1030,11 +1029,18 @@ public class PhantomPartyManager
 		final boolean addressed = !named.isEmpty();
 		final List<Member> targets = addressed ? named : mine;
 		boolean matched = false;
-		for (Member state : targets)
+		if (tryPartyCommand(speaker, message))
 		{
-			if (tryCommand(state, speaker, message, addressed))
+			matched = true;
+		}
+		if (!matched)
+		{
+			for (Member state : targets)
 			{
-				matched = true;
+				if (tryCommand(state, speaker, message, addressed))
+				{
+					matched = true;
+				}
 			}
 		}
 		if (matched)
@@ -1106,6 +1112,46 @@ public class PhantomPartyManager
 			return PartyRole.DANCER;
 		}
 		return null;
+	}
+
+	/**
+	 * Deterministic parser of commands to the entire party
+	 *
+	 * @return {@code true} if the line matched a known command (and was acted on); {@code false} for free-form
+	 *         text the caller should route the call to each party member
+	 */
+	private boolean tryPartyCommand(Player owner, String message)
+	{
+		if (!owner.isInParty())
+		{
+			return false;
+		}
+
+		final String text = message.toLowerCase().trim();
+
+		if (containsAny(text, "party return loot", "party hand over loot"))
+		{
+			_pendingTrades = new CopyOnWriteArrayList<>();
+			_members.values().stream()
+					.filter(member -> member.lootingSessionItems != null && !member.lootingSessionItems.isEmpty())
+					.collect(Collectors.toCollection(() -> _pendingTrades));
+			if (_pendingTrades.isEmpty()) {
+				return false;
+			}
+			// first trade can and should be started eagerly
+			_currentTrading = _pendingTrades.getFirst();
+			if (_currentTrading.tradingState == TradingState.NOT_TRADING)
+			{
+				PhantomExchangeManager.newInstance().runTrade(
+						_currentTrading.npc,
+						owner,
+						_currentTrading.lootingSessionItems
+				);
+			}
+			return true;
+		}
+
+		return false;
 	}
 
 	/**
@@ -1344,22 +1390,24 @@ public class PhantomPartyManager
 			return true;
 		}
 
-		if (state.role == PartyRole.BOUNTY_HUNTER) {
-			if (containsAny(text, "give me spoils", "give me spoil", "give me sweep", "return spoil"))
+		if (containsAny(text, "return loot", "hand over loot", "hand over loot"))
+		{
+			Map<Integer, Integer> spoils = state.lootingSessionItems;
+			if (spoils.isEmpty()) {
+				deliver(state, "nothing to hand over yet, how about a few more mobs then?");
+				return true;
+			}
+			if (addressed && state.tradingState == TradingState.NOT_TRADING)
 			{
-				Map<Integer, Integer> spoils = state.lootingSessionItems;
-				if (spoils.isEmpty()) {
-					deliver(state, "nothing to hand over yet, how about a few more mobs then?");
-					return true;
-				}
+				_currentTrading = state;
 				deliver(state, "here's your loot mate, have fun with it!");
 				PhantomExchangeManager.newInstance().runTrade(
 						state.npc,
 						owner,
 						spoils
 				);
-				return true;
 			}
+			return true;
 		}
 
 		// Support on-demand orders actually do the thing now (not just acknowledge).
@@ -2244,23 +2292,39 @@ public class PhantomPartyManager
 			return true;
 		}
 
-		if (state.role == PartyRole.BOUNTY_HUNTER) {
+		if (_currentTrading == state) {
 			switch (state.tradingState) {
-                case IS_TRADING -> {
+				case IS_TRADING -> {
 					return true;
-                }
-                case FINISHED -> {
+				}
+				case FINISHED -> {
 					state.lootingSessionItems = null;
 					deliver(state, "thank you for your time boss o7");
 					state.tradingState = TradingState.NOT_TRADING;
+					if (_pendingTrades.isEmpty()) {
+						_currentTrading = null;
+					} else {
+						_pendingTrades.removeFirst();
+						_currentTrading = _pendingTrades.isEmpty() ? null : _pendingTrades.getFirst();
+					}
+					if (_currentTrading != null) {
+						if (_currentTrading.tradingState == TradingState.NOT_TRADING)
+						{
+							PhantomExchangeManager.newInstance().runTrade(
+									_currentTrading.npc,
+									owner,
+									_currentTrading.lootingSessionItems
+							);
+						}
+					}
 					return true;
-                }
-                case CANCELLED -> {
+				}
+				case CANCELLED -> {
 					deliver(state, "not now, got you, back to the grind");
 					state.tradingState = TradingState.NOT_TRADING;
 					return true;
-                }
-            }
+				}
+			}
 		}
 
 		if (state.isSupport())
