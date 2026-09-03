@@ -2,10 +2,30 @@
 
 A standalone, modern editor for your server's `.ini` config files - rates, fake-player
 behaviour, auto-play, premium and more - **plus a visual editor for how recruited phantoms
-fight**. No install, no build, no login, **no Python/Flask**: one self-contained HTML file,
-opened in a browser.
+fight**. No install, no build, no login, **no Python/Flask**: one self-contained HTML file.
 
-## Quick start
+## Open it as an app (recommended, no browser)
+
+In the packaged server it runs as its own desktop window - **no browser at all**. Open it with the
+**Config Editor** button in the launcher (`LivingWorld.exe`).
+
+The launcher hosts this page in a Microsoft WebView2 window (`ConfigEditorWindow` in the compiled
+launcher) and reads and writes your server files through the launcher itself, using normal Windows
+file access instead of the browser File System Access API. That removes the browser requirement and
+the permission lapse that made "open the game folder" stop detecting the `.ini` files. It also opens
+straight to your server's `game` folder with no folder picker: the launcher hands the window that path.
+
+Requirements: the **WebView2 Runtime**, which ships with Windows 11 and with any recent Microsoft
+Edge on Windows 10. If it is missing, the launcher shows the Microsoft download link. The WebView2
+DLLs ride inside `LivingWorld.exe`; nothing else to install.
+
+The file bridge is `native-bridge.js`, injected by the launcher before the page loads. In a normal
+browser that file does nothing, so `index.html` still behaves exactly as documented below.
+
+## Quick start (browser fallback)
+
+The single-file browser mode still works if you ever want it (for example from a raw source
+checkout without the pack).
 
 1. Open `index.html` in **Chrome / Edge / Brave** (Chromium browsers can write files in place).
 2. Click **Open game folder** and pick your server's `game` directory (the one that holds both

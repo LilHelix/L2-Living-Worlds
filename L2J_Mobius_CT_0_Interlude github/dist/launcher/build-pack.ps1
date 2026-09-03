@@ -228,20 +228,15 @@ That's it - once the brain is running, the bots start chatting.
 Set-Content -Path (Join-Path $brainDst 'README.md') -Value $brainReadme -Encoding UTF8
 Ok "brain bundled (optional; needs Python + a model or API key to run)"
 
-# ---- 6c. bundle the FPC editor (visual bot-data editor) into pack\tools -----
-$editorSrc = Join-Path $ProjectRoot 'tools\fpc-editor'
-if (Test-Path $editorSrc) {
-    Info "bundling the FPC editor into pack\tools\fpc-editor ..."
-    Copy-Tree $editorSrc (Join-Path $Pack 'tools\fpc-editor')
-    Ok "FPC editor bundled (open tools\fpc-editor\index.html in a browser)"
-}
-
-# ---- 6d. bundle the config control panel (visual .ini editor) into pack\tools -----
+# ---- 6c. bundle the config control panel (visual .ini editor) into pack\tools -----
+# The launcher's Config Editor button opens tools\l2admin\index.html in an in-app
+# WebView2 window; the WebView2 DLLs ride inside LivingWorld.exe (see launcher-app),
+# so nothing extra is staged here.
 $adminSrc = Join-Path $ProjectRoot 'tools\l2admin'
 if (Test-Path $adminSrc) {
-    Info "bundling the config control panel into pack\tools\l2admin ..."
+    Info "bundling the config editor into pack\tools\l2admin ..."
     Copy-Tree $adminSrc (Join-Path $Pack 'tools\l2admin')
-    Ok "config control panel bundled (open tools\l2admin\index.html in a browser)"
+    Ok "config editor bundled (opened by the launcher's Config Editor button)"
 }
 
 # ---- 6e. bundle the playstyle validator into pack\tools --------------------
@@ -385,7 +380,7 @@ alone - any new settings this release adds are called out in the release notes.
 Write-Host ""
 if (Test-Path (Join-Path $Pack 'LivingWorld.exe')) {
     Write-Host "Full pack : unzip anywhere and double-click LivingWorld.exe (new testers)." -ForegroundColor Green
-    Write-Host "            Start-Server.bat / Control-Panel.bat remain as a fallback." -ForegroundColor Green
+    Write-Host "            Start-Server.bat remains as a script-only fallback." -ForegroundColor Green
 } else {
     Write-Host "Full pack : unzip anywhere and double-click Start-Server.bat (new testers)." -ForegroundColor Green
 }

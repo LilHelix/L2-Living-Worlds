@@ -5137,6 +5137,17 @@ function fpcOpenTab(){
   if (ob) ob.style.display = window.__fpcDataDir ? 'none' : '';
   if (window.__fpcResize){ try{ window.__fpcResize(); }catch(_){} }
 }
+
+// --- Desktop app (WebView2) integration -----------------------------------
+// When l2admin runs inside the desktop host instead of a browser, the host has
+// already injected native-bridge.js and stamped the server's game folder onto
+// window.__l2native.gameDir. Open that folder here with no click and no folder
+// picker: loadFromHandle reads the config panels and, through wireDataTabs,
+// wires the Phantom Playstyles, Bot Clans and Population tabs from the same
+// folder. In a normal browser __l2native is undefined and nothing changes.
+if (window.__l2native && typeof window.__l2native.openGameDir === "function"){
+  window.__l2native.openGameDir(loadFromHandle);
+}
 </script>
 </body>
 </html>

@@ -48,6 +48,7 @@ public partial class MainWindow : Window
         StopButton.Click += Stop_Click;
         SettingsButton.Click += Settings_Click;
         UpdateButton.Click += Update_Click;
+        ConfigButton.Click += Config_Click;
 
         // Live status lights.
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -161,6 +162,34 @@ public partial class MainWindow : Window
         var dlg = new SettingsWindow(_paths) { Owner = this };
         dlg.ShowDialog();
         _cfg = Config.Load(new Ini(_paths.IniPath));
+    }
+
+    // Opens the config editor (l2admin) in its own in-app WebView2 window, no
+    // browser. ConfigEditorWindow hosts tools\l2admin\index.html and hands it the
+    // server game folder so it opens straight to the config panels. It is modeless,
+    // so the server can be up or down while it is used.
+    private void Config_Click(object sender, RoutedEventArgs e)
+    {
+        var index = _paths.L2AdminIndex;
+        var bridge = _paths.L2AdminBridge;
+        if (!File.Exists(index) || !File.Exists(bridge))
+        {
+            MessageBox.Show(
+                "The config editor files were not found (tools\\l2admin\\index.html and native-bridge.js). They ship with the pack.",
+                "Living World Launcher", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        try
+        {
+            var gameDir = Directory.Exists(_paths.GameDir) ? _paths.GameDir : null;
+            var win = new ConfigEditorWindow(index, bridge, gameDir, _paths.WebView2UserData) { Owner = this };
+            win.Show();
+            Log("Opening the config editor ...");
+        }
+        catch (Exception ex)
+        {
+            Log("[FAIL] could not open the config editor: " + ex.Message);
+        }
     }
 
     // ---- updates ----------------------------------------------------------

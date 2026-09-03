@@ -67,8 +67,8 @@ the servers and the bundled DB down cleanly.
 
 ## Checking for updates from inside the pack (automatic)
 
-The pack can update itself. Double-click **`Check-Updates.bat`** (or use the **Check for updates**
-button in the Control Panel). It:
+The pack can update itself. Double-click **`scripts\Check-Updates.bat`** (or use the **Check for
+updates** button in the launcher). It:
 
 1. Reads `launcher\version.txt` (stamped at build time by `-Version`).
 2. Asks the public repo `Teravibes/L2-Living-Worlds` for the newest release. Each version is published
@@ -130,11 +130,11 @@ broken patch. No manifest → the patch step is skipped and only the full pack i
 The bots can hold in-character chat through a small local Flask service, the "brain". It is **optional
 and off by default** — the server and all the bots work fully without it; this only adds the talking.
 
-- **Set it up once:** double-click **`Configure-Brain.bat`** (or the **Set up / configure brain** button
-  in the Control Panel). It installs Python if needed and lets you choose **Ollama** (free, local, offline,
+- **Set it up once:** double-click **`scripts\Configure-Brain.bat`** (or the **Set up / configure brain**
+  button in the launcher). It installs Python if needed and lets you choose **Ollama** (free, local, offline,
   needs a decent GPU/CPU) or **DeepSeek** (cloud API, needs a key). It writes `.env`, builds the
   virtualenv, and starts the brain on `http://127.0.0.1:5000`.
-- **After that, it starts straight in:** once set up, the same button/`Configure-Brain.bat` skips the
+- **After that, it starts straight in:** once set up, the same button/`scripts\Configure-Brain.bat` skips the
   provider question and just launches the brain. To **switch provider**, run `setup_brain.bat --reset`
   (wipes `.env` and asks fresh).
 - **Start it automatically with the server:** set `StartBrain=true` in `launcher\launcher.ini`, or tick
