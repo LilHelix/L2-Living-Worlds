@@ -20,7 +20,7 @@ public sealed record UpdateInfo(string InstalledTag, string LatestTag);
 // matching -patch overlay. Faithful port of update.ps1's logic.
 public sealed class Updater
 {
-    // Keep in sync with update.ps1 / Control-Panel.ps1.
+    // Keep in sync with update.ps1.
     public const string UpdateRepo = "Teravibes/L2-Living-Worlds";
 
     private readonly LauncherPaths _paths;

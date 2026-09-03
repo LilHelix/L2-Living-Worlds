@@ -7,7 +7,7 @@ REM server works fully without this - it only adds the talking.
 REM
 REM After it is set up once, ticking "start brain with server" (or StartBrain=true
 REM in launcher\launcher.ini) will launch it automatically on each boot.
-set "BRAIN=%~dp0brain\setup_brain.bat"
+set "BRAIN=%~dp0..\brain\setup_brain.bat"
 if not exist "%BRAIN%" (
   echo Could not find the brain setup at "%BRAIN%".
   echo This pack may have been built without the optional brain.

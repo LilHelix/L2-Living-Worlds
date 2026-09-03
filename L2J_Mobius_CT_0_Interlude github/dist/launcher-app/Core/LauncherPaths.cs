@@ -17,6 +17,10 @@ public sealed class LauncherPaths
     public string RegistryPath => Path.Combine(LauncherDir, ".processes.json");
     public string VersionPath => Path.Combine(LauncherDir, "version.txt");
     public string AssetsDir => Path.Combine(LauncherDir, "assets");
+    public string L2AdminDir => Path.Combine(DistDir, "tools", "l2admin");
+    public string L2AdminIndex => Path.Combine(L2AdminDir, "index.html");
+    public string L2AdminBridge => Path.Combine(L2AdminDir, "native-bridge.js");
+    public string WebView2UserData => Path.Combine(LauncherDir, "webview2", "userdata");
     public string BackgroundPath => Path.Combine(AssetsDir, "background.png");
     public string IconPath => Path.Combine(AssetsDir, "launcher.ico");
     public string LibsDir => Path.Combine(DistDir, "libs");

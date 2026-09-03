@@ -114,6 +114,13 @@ else
 	else
 		record "js bot clans editor" 1
 	fi
+	echo
+	echo ">>> JavaScript: native file bridge (tools/l2admin desktop app)"
+	if node tests/js/native_bridge_test.js; then
+		record "js native bridge" 0
+	else
+		record "js native bridge" 1
+	fi
 fi
 
 # ---- Python brain tests ---------------------------------------------------

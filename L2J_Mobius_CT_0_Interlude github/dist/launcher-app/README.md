@@ -1,9 +1,10 @@
 # Living World Launcher (compiled)
 
-A real, compiled Windows launcher for the offline server. It replaces the
-double-click PowerShell path (`Start-Server.bat` / `Control-Panel.ps1`) with a
-single self-contained `LivingWorld.exe`: the player installs nothing, sees no
-console windows, and never touches PowerShell to install or launch.
+A real, compiled Windows launcher for the offline server. It is the single
+self-contained `LivingWorld.exe` the player runs: install nothing, no console
+windows, never touch PowerShell to install or launch. `Start-Server.bat` /
+`Stop-Server.bat` remain as a script-only fallback. It also hosts the config
+editor (l2admin) in an in-app WebView2 window via its Config Editor button.
 
 ## What it does
 

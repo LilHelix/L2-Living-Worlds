@@ -36,4 +36,12 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Hosts tools\l2admin\index.html as the in-app Config Editor window. The
+         managed DLLs and the native WebView2Loader ride inside the published exe
+         (IncludeNativeLibrariesForSelfExtract), so nothing extra ships alongside.
+         The WebView2 Evergreen RUNTIME is still expected on the player's PC. -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
 </Project>

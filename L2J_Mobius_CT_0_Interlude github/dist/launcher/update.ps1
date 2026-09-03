@@ -10,8 +10,8 @@
      vX.Y.Z          - full pack (fresh install: unzip and run)
      vX.Y.Z-patch    - patch overlay (existing install: what THIS script applies)
 
-  This is the single implementation used by both Check-Updates.bat and the
-  Control Panel button. A real GUI updater is a later step.
+  This is the script-path updater, run from scripts\Check-Updates.bat. The
+  compiled launcher (LivingWorld.exe) has its own updater in Updater.cs.
 
   Usage:
     update.ps1                 - check; if newer, ask before applying the patch
@@ -32,7 +32,7 @@ $InstallRoot = Split-Path -Parent $LauncherDir                       # folder wi
 $VersionPath = Join-Path $LauncherDir 'version.txt'
 $StopScript  = Join-Path $LauncherDir 'stop.ps1'
 
-# Public repo the update check looks at. Keep in sync with Control-Panel.ps1.
+# Public repo the update check looks at. Keep in sync with the launcher (Updater.cs).
 $UpdateRepo  = 'Teravibes/L2-Living-Worlds'
 
 function Info($t) { Write-Host "  [info] $t" -ForegroundColor Gray }
@@ -162,7 +162,7 @@ Write-Host ""
 Write-Host "  An update is available:  $installedTag  ->  $latestTag" -ForegroundColor Green
 
 if ($CheckOnly) {
-    Info "Run Check-Updates.bat (or the Control Panel update button) to download and apply it."
+    Info "Run scripts\Check-Updates.bat (or the launcher's Update button) to download and apply it."
     exit 0
 }
 
