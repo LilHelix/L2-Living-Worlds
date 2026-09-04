@@ -33,9 +33,6 @@ import org.l2jmobius.commons.util.ConfigReader;
  */
 public class OlympiadConfig
 {
-	// File
-	private static final String OLYMPIAD_CONFIG_FILE = "./config/Olympiad.ini";
-	
 	// Constants
 	public static boolean OLYMPIAD_ENABLED;
 	public static int OLYMPIAD_START_TIME;
@@ -70,7 +67,8 @@ public class OlympiadConfig
 	
 	public static void load(String baseConfigPath)
 	{
-		final ConfigReader config = new ConfigReader(OLYMPIAD_CONFIG_FILE);
+		String olympiadConfigFile = String.format("./%s/Olympiad.ini", baseConfigPath);
+		final ConfigReader config = new ConfigReader(olympiadConfigFile);
 		OLYMPIAD_ENABLED = config.getBoolean("OlympiadEnabled", true);
 		OLYMPIAD_START_TIME = config.getInt("OlympiadStartTime", 18);
 		OLYMPIAD_MIN = config.getInt("OlympiadMin", 0);

@@ -40,9 +40,6 @@ public class PlayerConfig
 {
 	private static final Logger LOGGER = Logger.getLogger(PlayerConfig.class.getName());
 	
-	// File
-	private static final String PLAYER_CONFIG_FILE = "./config/Player.ini";
-	
 	// Constants
 	public static boolean PLAYER_DELEVEL;
 	public static boolean DECREASE_SKILL_LEVEL;
@@ -231,7 +228,8 @@ public class PlayerConfig
 	
 	public static void load(String baseConfigPath)
 	{
-		final ConfigReader config = new ConfigReader(PLAYER_CONFIG_FILE);
+		String playerConfigFile = String.format("./%s/Player.ini", baseConfigPath);
+		final ConfigReader config = new ConfigReader(playerConfigFile);
 		PLAYER_DELEVEL = config.getBoolean("Delevel", true);
 		DECREASE_SKILL_LEVEL = config.getBoolean("DecreaseSkillOnDelevel", true);
 		ALT_WEIGHT_LIMIT = config.getDouble("AltWeightLimit", 1);

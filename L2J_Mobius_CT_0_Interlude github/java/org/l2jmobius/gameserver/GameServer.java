@@ -177,18 +177,18 @@ public class GameServer
 	private long _sectionStartTime = START_TIME;
 	private String _previousSectionName = null;
 	
-	public GameServer(String[] args) throws Exception
+	public GameServer() throws Exception
 	{
 		System.out.println("=== Living Worlds Server ===");
 
-		GameServerLaunchArgs gameServerLaunchArgs = GameServerLaunchArgumentsParser.parse(args);
+		GameServerLaunchArgs gameServerLaunchArgs = GameServerLaunchArgumentsParser.parse();
 
 		// GUI
 		InterfaceConfig.load();
 		if (InterfaceConfig.ENABLE_GUI)
 		{
 			System.out.println("GameServer: Running in GUI mode.");
-			new Gui();
+			new Gui(gameServerLaunchArgs);
 		}
 		
 		// Create log folder
@@ -505,8 +505,8 @@ public class GameServer
 		return START_TIME;
 	}
 	
-	public static void main(String[] args) throws Exception
+	public static void main() throws Exception
 	{
-		new GameServer(args);
+		new GameServer();
 	}
 }

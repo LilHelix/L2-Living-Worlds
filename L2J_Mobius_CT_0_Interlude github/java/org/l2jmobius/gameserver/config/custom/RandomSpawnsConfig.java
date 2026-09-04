@@ -31,9 +31,6 @@ import org.l2jmobius.commons.util.ConfigReader;
  */
 public class RandomSpawnsConfig
 {
-	// File
-	private static final String RANDOM_SPAWNS_CONFIG_FILE = "./config/Custom/RandomSpawns.ini";
-	
 	// Constants
 	public static boolean ENABLE_RANDOM_MONSTER_SPAWNS;
 	public static int MOB_MAX_SPAWN_RANGE;
@@ -42,7 +39,8 @@ public class RandomSpawnsConfig
 	
 	public static void load(String baseConfigPath)
 	{
-		final ConfigReader config = new ConfigReader(RANDOM_SPAWNS_CONFIG_FILE);
+		String randomSpawnsConfigFile = String.format("./%s/Custom/RandomSpawns.ini", baseConfigPath);
+		final ConfigReader config = new ConfigReader(randomSpawnsConfigFile);
 		ENABLE_RANDOM_MONSTER_SPAWNS = config.getBoolean("EnableRandomMonsterSpawns", false);
 		MOB_MAX_SPAWN_RANGE = config.getInt("MaxSpawnMobRange", 150);
 		MOB_MIN_SPAWN_RANGE = MOB_MAX_SPAWN_RANGE * -1;

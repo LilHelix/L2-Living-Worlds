@@ -28,9 +28,6 @@ import org.l2jmobius.commons.util.ConfigReader;
  */
 public class PvpRewardItemConfig
 {
-	// File
-	private static final String PVP_REWARD_ITEM_CONFIG_FILE = "./config/Custom/PvpRewardItem.ini";
-	
 	// Constants
 	public static boolean REWARD_PVP_ITEM;
 	public static int REWARD_PVP_ITEM_ID;
@@ -45,7 +42,8 @@ public class PvpRewardItemConfig
 	
 	public static void load(String baseConfigPath)
 	{
-		final ConfigReader config = new ConfigReader(PVP_REWARD_ITEM_CONFIG_FILE);
+		String pvpRewardItemConfigFile = String.format("./%s/Custom/PvpRewardItem.ini", baseConfigPath);
+		final ConfigReader config = new ConfigReader(pvpRewardItemConfigFile);
 		REWARD_PVP_ITEM = config.getBoolean("RewardPvpItem", false);
 		REWARD_PVP_ITEM_ID = config.getInt("RewardPvpItemId", 57);
 		REWARD_PVP_ITEM_AMOUNT = config.getInt("RewardPvpItemAmount", 1000);

@@ -28,9 +28,6 @@ import org.l2jmobius.commons.util.ConfigReader;
  */
 public class SellBuffsConfig
 {
-	// File
-	private static final String SELL_BUFFS_CONFIG_FILE = "./config/Custom/SellBuffs.ini";
-	
 	// Constants
 	public static boolean SELLBUFF_ENABLED;
 	public static int SELLBUFF_MP_MULTIPLER;
@@ -41,7 +38,8 @@ public class SellBuffsConfig
 	
 	public static void load(String baseConfigPath)
 	{
-		final ConfigReader config = new ConfigReader(SELL_BUFFS_CONFIG_FILE);
+		String sellBuffsConfigFile = String.format("./%s/Custom/SellBuffs.ini", baseConfigPath);
+		final ConfigReader config = new ConfigReader(sellBuffsConfigFile);
 		SELLBUFF_ENABLED = config.getBoolean("SellBuffEnable", false);
 		SELLBUFF_MP_MULTIPLER = config.getInt("MpCostMultipler", 1);
 		SELLBUFF_PAYMENT_ID = config.getInt("PaymentID", 57);

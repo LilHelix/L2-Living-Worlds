@@ -28,9 +28,6 @@ import org.l2jmobius.commons.util.ConfigReader;
  */
 public class BankingConfig
 {
-	// File
-	private static final String BANKING_CONFIG_FILE = "./config/Custom/Banking.ini";
-	
 	// Constants
 	public static boolean BANKING_SYSTEM_ENABLED;
 	public static int BANKING_SYSTEM_GOLDBARS;
@@ -38,7 +35,8 @@ public class BankingConfig
 	
 	public static void load(String baseConfigPath)
 	{
-		final ConfigReader config = new ConfigReader(BANKING_CONFIG_FILE);
+		String bankingConfigFile = String.format("./%s/Custom/Banking.ini", baseConfigPath);
+		final ConfigReader config = new ConfigReader(bankingConfigFile);
 		BANKING_SYSTEM_ENABLED = config.getBoolean("BankingEnabled", false);
 		BANKING_SYSTEM_GOLDBARS = config.getInt("BankingGoldbarCount", 1);
 		BANKING_SYSTEM_ADENA = config.getInt("BankingAdenaCount", 500000000);

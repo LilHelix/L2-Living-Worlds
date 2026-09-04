@@ -32,9 +32,6 @@ import org.l2jmobius.commons.util.StringUtil;
  */
 public class FeatureConfig
 {
-	// File
-	private static final String FEATURE_CONFIG_FILE = "./config/Feature.ini";
-	
 	// Constants
 	public static long CH_TELE_FEE_RATIO;
 	public static int CH_TELE1_FEE;
@@ -208,7 +205,8 @@ public class FeatureConfig
 	
 	public static void load(String baseConfigPath)
 	{
-		final ConfigReader config = new ConfigReader(FEATURE_CONFIG_FILE);
+		String featureConfigFile = String.format("./%s/Feature.ini", baseConfigPath);
+		final ConfigReader config = new ConfigReader(featureConfigFile);
 		CH_TELE_FEE_RATIO = config.getLong("ClanHallTeleportFunctionFeeRatio", 604800000);
 		CH_TELE1_FEE = config.getInt("ClanHallTeleportFunctionFeeLvl1", 7000);
 		CH_TELE2_FEE = config.getInt("ClanHallTeleportFunctionFeeLvl2", 14000);
