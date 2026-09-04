@@ -35,7 +35,7 @@ public class StartingTitleConfig
 	public static boolean ENABLE_CUSTOM_STARTING_TITLE;
 	public static String CUSTOM_STARTING_TITLE;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(STARTING_TITLE_CONFIG_FILE);
 		ENABLE_CUSTOM_STARTING_TITLE = config.getBoolean("EnableStartingTitle", false);

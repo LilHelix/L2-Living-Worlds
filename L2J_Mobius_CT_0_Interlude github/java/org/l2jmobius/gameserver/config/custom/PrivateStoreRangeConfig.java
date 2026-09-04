@@ -35,7 +35,7 @@ public class PrivateStoreRangeConfig
 	public static int SHOP_MIN_RANGE_FROM_PLAYER;
 	public static int SHOP_MIN_RANGE_FROM_NPC;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(PRIVATE_STORE_RANGE_CONFIG_FILE);
 		SHOP_MIN_RANGE_FROM_PLAYER = config.getInt("ShopMinRangeFromPlayer", 50);

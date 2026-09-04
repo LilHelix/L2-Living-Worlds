@@ -35,7 +35,7 @@ public class WarehouseSortingConfig
 	public static boolean ENABLE_WAREHOUSESORTING_CLAN;
 	public static boolean ENABLE_WAREHOUSESORTING_PRIVATE;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(WAREHOUSE_SORTING_CONFIG_FILE);
 		ENABLE_WAREHOUSESORTING_CLAN = config.getBoolean("EnableWarehouseSortingClan", false);

@@ -34,7 +34,7 @@ public class OnlineInfoConfig
 	// Constants
 	public static boolean ENABLE_ONLINE_COMMAND;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(ONLINE_INFO_CONFIG_FILE);
 		ENABLE_ONLINE_COMMAND = config.getBoolean("EnableOnlineCommand", false);

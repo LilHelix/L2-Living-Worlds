@@ -62,7 +62,7 @@ public class PremiumSystemConfig
 	public static Map<Integer, Float> PREMIUM_RATE_DROP_CHANCE_BY_ID;
 	public static Map<Integer, Float> PREMIUM_RATE_DROP_AMOUNT_BY_ID;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(PREMIUM_SYSTEM_CONFIG_FILE);
 		PREMIUM_SYSTEM_ENABLED = config.getBoolean("EnablePremiumSystem", false);

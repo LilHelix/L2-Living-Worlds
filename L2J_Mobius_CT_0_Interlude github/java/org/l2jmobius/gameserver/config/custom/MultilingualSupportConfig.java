@@ -44,7 +44,7 @@ public class MultilingualSupportConfig
 	public static List<String> MULTILANG_ALLOWED = new ArrayList<>();
 	public static boolean MULTILANG_VOICED_ALLOW;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(MULTILANGUAL_SUPPORT_CONFIG_FILE);
 		MULTILANG_DEFAULT = config.getString("MultiLangDefault", "en").toLowerCase();

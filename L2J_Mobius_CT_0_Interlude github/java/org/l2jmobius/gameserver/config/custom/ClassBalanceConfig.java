@@ -74,7 +74,7 @@ public class ClassBalanceConfig
 	public static float[] EXP_AMOUNT_MULTIPLIERS = new float[119];
 	public static float[] SP_AMOUNT_MULTIPLIERS = new float[119];
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(CLASS_BALANCE_CONFIG_FILE);
 		

@@ -38,7 +38,7 @@ public class AllowedPlayerRacesConfig
 	public static boolean ALLOW_ORC;
 	public static boolean ALLOW_DWARF;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(ALLOWED_PLAYER_RACES_CONFIG_FILE);
 		ALLOW_HUMAN = config.getBoolean("AllowHuman", true);

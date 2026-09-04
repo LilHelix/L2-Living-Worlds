@@ -36,7 +36,7 @@ public class ScreenWelcomeMessageConfig
 	public static String WELCOME_MESSAGE_TEXT;
 	public static int WELCOME_MESSAGE_TIME;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(SCREEN_WELCOME_MESSAGE_CONFIG_FILE);
 		WELCOME_MESSAGE_ENABLED = config.getBoolean("ScreenWelcomeMessageEnable", false);

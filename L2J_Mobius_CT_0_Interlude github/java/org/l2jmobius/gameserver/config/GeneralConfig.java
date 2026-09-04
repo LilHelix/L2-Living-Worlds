@@ -180,7 +180,7 @@ public class GeneralConfig
 	public static boolean ENABLE_FALLING_DAMAGE;
 	public static boolean DEBUFF_DURATION_USES_RESISTS;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(GENERAL_CONFIG_FILE);
 		EVERYBODY_HAS_ADMIN_RIGHTS = config.getBoolean("EverybodyHasAdminRights", false);

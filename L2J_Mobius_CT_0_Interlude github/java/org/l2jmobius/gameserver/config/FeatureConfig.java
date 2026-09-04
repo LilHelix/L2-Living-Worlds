@@ -206,7 +206,7 @@ public class FeatureConfig
 	public static boolean ALLOW_WYVERN_DURING_SIEGE;
 	public static boolean ALLOW_MOUNTS_DURING_SIEGE;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(FEATURE_CONFIG_FILE);
 		CH_TELE_FEE_RATIO = config.getLong("ClanHallTeleportFunctionFeeRatio", 604800000);

@@ -34,7 +34,7 @@ public class ServerTimeConfig
 	// Constant
 	public static boolean DISPLAY_SERVER_TIME;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(SERVER_TIME_CONFIG_FILE);
 		DISPLAY_SERVER_TIME = config.getBoolean("DisplayServerTime", false);

@@ -34,7 +34,7 @@ public class MerchantZeroSellPriceConfig
 	// Constants
 	public static boolean MERCHANT_ZERO_SELL_PRICE;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(MERCHANT_ZERO_SELL_PRICE_CONFIG_FILE);
 		MERCHANT_ZERO_SELL_PRICE = config.getBoolean("MerchantZeroSellPrice", false);

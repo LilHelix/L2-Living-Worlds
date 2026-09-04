@@ -57,7 +57,7 @@ public class FakePlayersConfig
 	public static boolean PHANTOM_HUNTER_PLAYSTYLES;
 	public static boolean PHANTOM_HUNTER_RETALIATE;
 
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(FAKE_PLAYERS_CONFIG_FILE);
 		FAKE_PLAYERS_ENABLED = config.getBoolean("EnableFakePlayers", false);

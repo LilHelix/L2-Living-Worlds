@@ -43,7 +43,7 @@ public class PvpRewardItemConfig
 	public static boolean DISABLE_REWARDS_IN_INSTANCES;
 	public static boolean DISABLE_REWARDS_IN_PVP_ZONES;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(PVP_REWARD_ITEM_CONFIG_FILE);
 		REWARD_PVP_ITEM = config.getBoolean("RewardPvpItem", false);

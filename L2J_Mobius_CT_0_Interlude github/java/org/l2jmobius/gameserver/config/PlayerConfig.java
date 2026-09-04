@@ -229,7 +229,7 @@ public class PlayerConfig
 	public static boolean RANDOMIZE_PHYSICAL_SKILL_DAMAGE;
 	public static boolean RANDOMIZE_MAGICAL_SKILL_DAMAGE;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(PLAYER_CONFIG_FILE);
 		PLAYER_DELEVEL = config.getBoolean("Delevel", true);

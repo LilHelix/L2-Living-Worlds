@@ -68,7 +68,7 @@ public class OlympiadConfig
 	public static int OLYMPIAD_PERIOD_MULTIPLIER;
 	public static List<Integer> OLYMPIAD_COMPETITION_DAYS;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(OLYMPIAD_CONFIG_FILE);
 		OLYMPIAD_ENABLED = config.getBoolean("OlympiadEnabled", true);

@@ -115,7 +115,7 @@ public class ServerConfig
 	public static int SERVER_ID;
 	public static byte[] HEX_ID;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(SERVER_CONFIG_FILE);
 		GAMESERVER_HOSTNAME = config.getString("GameserverHostname", "0.0.0.0");

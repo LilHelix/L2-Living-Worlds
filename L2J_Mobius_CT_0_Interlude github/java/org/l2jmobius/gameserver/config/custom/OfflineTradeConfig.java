@@ -51,7 +51,7 @@ public class OfflineTradeConfig
 	public static boolean ENABLE_OFFLINE_COMMAND;
 	public static List<AbnormalVisualEffect> OFFLINE_ABNORMAL_EFFECTS = new ArrayList<>();
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(OFFLINE_TRADE_CONFIG_FILE);
 		OFFLINE_TRADE_ENABLE = config.getBoolean("OfflineTradeEnable", false);

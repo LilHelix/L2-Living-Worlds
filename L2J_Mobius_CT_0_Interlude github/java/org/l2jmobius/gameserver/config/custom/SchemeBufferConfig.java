@@ -36,7 +36,7 @@ public class SchemeBufferConfig
 	public static int BUFFER_ITEM_ID;
 	public static int BUFFER_STATIC_BUFF_COST;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(SCHEME_BUFFER_CONFIG_FILE);
 		BUFFER_MAX_SCHEMES = config.getInt("BufferMaxSchemesPerChar", 4);

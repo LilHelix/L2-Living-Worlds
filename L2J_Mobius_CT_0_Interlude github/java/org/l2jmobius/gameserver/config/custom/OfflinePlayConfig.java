@@ -46,7 +46,7 @@ public class OfflinePlayConfig
 	public static int OFFLINE_PLAY_NAME_COLOR;
 	public static List<AbnormalVisualEffect> OFFLINE_PLAY_ABNORMAL_EFFECTS = new ArrayList<>();
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(OFFLINE_PLAY_CONFIG_FILE);
 		ENABLE_OFFLINE_PLAY_COMMAND = config.getBoolean("EnableOfflinePlayCommand", false);

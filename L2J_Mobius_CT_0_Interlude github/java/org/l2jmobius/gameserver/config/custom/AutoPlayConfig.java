@@ -49,7 +49,7 @@ public class AutoPlayConfig
 	public static Set<Integer> IGNORED_AUTO_PICK_ITEMS = new HashSet<>();
 	public static String AUTO_PLAY_LOGIN_MESSAGE;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(AUTO_PLAY_CONFIG_FILE);
 		ENABLE_AUTO_PLAY = config.getBoolean("EnableAutoPlay", false);

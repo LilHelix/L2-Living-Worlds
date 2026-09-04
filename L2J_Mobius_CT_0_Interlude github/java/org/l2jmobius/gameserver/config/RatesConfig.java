@@ -111,7 +111,7 @@ public class RatesConfig
 	public static int BOSS_DROP_MAX_LEVEL;
 	public static List<DropHolder> BOSS_DROP_LIST = new ArrayList<>();
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(RATES_CONFIG_FILE);
 		RATE_XP = config.getFloat("RateXp", 1);

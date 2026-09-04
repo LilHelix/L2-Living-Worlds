@@ -166,6 +166,8 @@ import org.l2jmobius.gameserver.taskmanagers.ItemLifeTimeTaskManager;
 import org.l2jmobius.gameserver.taskmanagers.ItemsAutoDestroyTaskManager;
 import org.l2jmobius.gameserver.ui.Gui;
 import org.l2jmobius.gameserver.util.Broadcast;
+import org.l2jmobius.gameserver.util.argsparse.GameServerLaunchArgs;
+import org.l2jmobius.gameserver.util.argsparse.GameServerLaunchArgumentsParser;
 
 public class GameServer
 {
@@ -175,10 +177,12 @@ public class GameServer
 	private long _sectionStartTime = START_TIME;
 	private String _previousSectionName = null;
 	
-	public GameServer() throws Exception
+	public GameServer(String[] args) throws Exception
 	{
 		System.out.println("=== Living Worlds Server ===");
-		
+
+		GameServerLaunchArgs gameServerLaunchArgs = GameServerLaunchArgumentsParser.parse(args);
+
 		// GUI
 		InterfaceConfig.load();
 		if (InterfaceConfig.ENABLE_GUI)
@@ -196,9 +200,9 @@ public class GameServer
 		{
 			LogManager.getLogManager().readConfiguration(is);
 		}
-		
+
 		// Initialize config
-		ConfigLoader.init();
+		ConfigLoader.init(gameServerLaunchArgs.baseConfigPath());
 		
 		LOGGER.info("=== Living Worlds Server ===");
 		
@@ -503,6 +507,6 @@ public class GameServer
 	
 	public static void main(String[] args) throws Exception
 	{
-		new GameServer();
+		new GameServer(args);
 	}
 }

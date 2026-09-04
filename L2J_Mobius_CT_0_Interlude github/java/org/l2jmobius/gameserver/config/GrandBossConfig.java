@@ -54,7 +54,7 @@ public class GrandBossConfig
 	public static int FRINTEZZA_SPAWN_INTERVAL;
 	public static int FRINTEZZA_SPAWN_RANDOM;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(GRANDBOSS_CONFIG_FILE);
 		ANTHARAS_WAIT_TIME = config.getInt("AntharasWaitTime", 30);

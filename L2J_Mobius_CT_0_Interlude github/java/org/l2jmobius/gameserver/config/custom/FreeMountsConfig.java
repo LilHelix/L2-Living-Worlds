@@ -35,7 +35,7 @@ public class FreeMountsConfig
 	public static boolean ENABLE_FREE_STRIDER;
 	public static boolean ENABLE_FREE_WYVERN;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(FREE_MOUNTS_CONFIG_FILE);
 		ENABLE_FREE_STRIDER = config.getBoolean("EnableFreeStrider", false);

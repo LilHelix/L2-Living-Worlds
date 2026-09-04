@@ -49,7 +49,7 @@ public class PvpTitleColorConfig
 	public static String TITLE_FOR_PVP_AMOUNT4;
 	public static String TITLE_FOR_PVP_AMOUNT5;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(PVP_TITLE_CONFIG_FILE);
 		PVP_COLOR_SYSTEM_ENABLED = config.getBoolean("EnablePvPColorSystem", false);

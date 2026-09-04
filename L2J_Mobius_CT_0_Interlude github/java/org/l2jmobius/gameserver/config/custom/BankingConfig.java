@@ -36,7 +36,7 @@ public class BankingConfig
 	public static int BANKING_SYSTEM_GOLDBARS;
 	public static int BANKING_SYSTEM_ADENA;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(BANKING_CONFIG_FILE);
 		BANKING_SYSTEM_ENABLED = config.getBoolean("BankingEnabled", false);

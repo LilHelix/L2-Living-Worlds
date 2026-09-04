@@ -39,7 +39,7 @@ public class IdManagerConfig
 	public static double RESIZE_THRESHOLD;
 	public static double RESIZE_MULTIPLIER;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(ID_MANAGER_CONFIG_FILE);
 		DATABASE_CLEAN_UP = config.getBoolean("DatabaseCleanUp", true);

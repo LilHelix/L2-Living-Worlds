@@ -58,7 +58,7 @@ public class ChampionMonstersConfig
 	public static boolean CHAMPION_ENABLE_VITALITY;
 	public static boolean CHAMPION_ENABLE_IN_INSTANCES;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(CHAMPION_MONSTERS_CONFIG_FILE);
 		CHAMPION_ENABLE = config.getBoolean("ChampionEnable", false);

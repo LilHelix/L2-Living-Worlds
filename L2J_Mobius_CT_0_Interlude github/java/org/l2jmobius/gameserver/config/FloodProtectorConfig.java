@@ -50,7 +50,7 @@ public class FloodProtectorConfig
 	public static FloodProtectorSettings FLOOD_PROTECTOR_ITEM_AUCTION;
 	public static FloodProtectorSettings FLOOD_PROTECTOR_PLAYER_ACTION;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(FLOOD_PROTECTOR_CONFIG_FILE);
 		FLOOD_PROTECTOR_USE_ITEM = new FloodProtectorSettings("UseItemFloodProtector");

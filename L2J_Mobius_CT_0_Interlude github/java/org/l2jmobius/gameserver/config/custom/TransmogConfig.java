@@ -41,7 +41,7 @@ public class TransmogConfig
 	public static int TRANSMOG_REMOVE_COST;
 	public static Set<Integer> TRANSMOG_BANNED_ITEM_IDS = new HashSet<>();
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(TRANSMOG_CONFIG_FILE);
 		ENABLE_TRANSMOG = config.getBoolean("TransmogEnabled", false);

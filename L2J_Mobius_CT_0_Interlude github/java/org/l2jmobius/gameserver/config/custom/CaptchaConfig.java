@@ -43,7 +43,7 @@ public class CaptchaConfig
 	public static int JAIL_TIME;
 	public static boolean DOUBLE_JAIL_TIME;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(CAPTCHA_CONFIG_FILE);
 		ENABLE_CAPTCHA = config.getBoolean("EnableCaptcha", false);

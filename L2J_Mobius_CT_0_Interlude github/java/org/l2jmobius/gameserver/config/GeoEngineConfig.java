@@ -48,7 +48,7 @@ public class GeoEngineConfig
 	public static float DIAGONAL_WEIGHT;
 	public static int MAX_POSTFILTER_PASSES;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(GEOENGINE_CONFIG_FILE);
 		GEODATA_PATH = Paths.get(ServerConfig.DATAPACK_ROOT.getPath() + "/" + config.getString("GeoDataPath", "geodata"));

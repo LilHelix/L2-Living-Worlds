@@ -37,7 +37,7 @@ public class PvpAnnounceConfig
 	public static String ANNOUNCE_PK_MSG;
 	public static String ANNOUNCE_PVP_MSG;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(PVP_ANNOUNCE_CONFIG_FILE);
 		ANNOUNCE_PK_PVP = config.getBoolean("AnnouncePkPvP", false);

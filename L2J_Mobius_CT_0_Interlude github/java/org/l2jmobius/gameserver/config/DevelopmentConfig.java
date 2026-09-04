@@ -47,7 +47,7 @@ public class DevelopmentConfig
 	public static boolean DEBUG_UNKNOWN_PACKETS;
 	public static Set<String> EXCLUDED_DEBUG_PACKETS;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(DEVELOPMENT_CONFIG_FILE);
 		LOG_SERVER_LOAD_TIMES = config.getBoolean("LogServerLoadTimes", false);

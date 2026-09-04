@@ -44,7 +44,7 @@ public class BossAnnouncementsConfig
 	public static Set<Integer> RAIDBOSSES_EXCLUDED_FROM_SPAWN_ANNOUNCEMENTS = new HashSet<>();
 	public static Set<Integer> RAIDBOSSES_EXCLUDED_FROM_DEFEAT_ANNOUNCEMENTS = new HashSet<>();
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(BOSS_ANNOUNCEMENTS_CONFIG_FILE);
 		RAIDBOSS_SPAWN_ANNOUNCEMENTS = config.getBoolean("RaidBossSpawnAnnouncements", false);

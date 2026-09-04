@@ -48,7 +48,7 @@ public class AutoPotionsConfig
 	public static Set<Integer> AUTO_HP_ITEM_IDS = new HashSet<>();
 	public static Set<Integer> AUTO_MP_ITEM_IDS = new HashSet<>();
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(AUTO_POTIONS_CONFIG_FILE);
 		AUTO_POTIONS_ENABLED = config.getBoolean("AutoPotionsEnabled", false);

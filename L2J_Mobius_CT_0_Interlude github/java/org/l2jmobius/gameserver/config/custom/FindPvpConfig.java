@@ -34,7 +34,7 @@ public class FindPvpConfig
 	// Constants
 	public static boolean ENABLE_FIND_PVP;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(FIND_PVP_CONFIG_FILE);
 		ENABLE_FIND_PVP = config.getBoolean("EnableFindPvP", false);

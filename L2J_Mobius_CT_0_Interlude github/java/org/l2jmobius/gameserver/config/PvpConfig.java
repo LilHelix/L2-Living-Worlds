@@ -48,7 +48,7 @@ public class PvpConfig
 	public static int PVP_NORMAL_TIME;
 	public static int PVP_PVP_TIME;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(PVP_CONFIG_FILE);
 		KARMA_DROP_GM = config.getBoolean("CanGMDropEquipment", false);

@@ -49,7 +49,7 @@ public class DualboxCheckConfig
 	public static boolean DUALBOX_COUNT_OFFLINE_TRADERS;
 	public static Map<Integer, Integer> DUALBOX_CHECK_WHITELIST;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(DUALBOX_CHECK_CONFIG_FILE);
 		DUALBOX_CHECK_MAX_PLAYERS_PER_IP = config.getInt("DualboxCheckMaxPlayersPerIP", 0);

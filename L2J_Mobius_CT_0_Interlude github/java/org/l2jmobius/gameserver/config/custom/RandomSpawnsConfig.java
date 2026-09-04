@@ -40,7 +40,7 @@ public class RandomSpawnsConfig
 	public static int MOB_MIN_SPAWN_RANGE;
 	public static Set<Integer> MOBS_LIST_NOT_RANDOM;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(RANDOM_SPAWNS_CONFIG_FILE);
 		ENABLE_RANDOM_MONSTER_SPAWNS = config.getBoolean("EnableRandomMonsterSpawns", false);

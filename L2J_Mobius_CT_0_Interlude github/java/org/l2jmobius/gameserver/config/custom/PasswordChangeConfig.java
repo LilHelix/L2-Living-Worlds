@@ -34,7 +34,7 @@ public class PasswordChangeConfig
 	// Constants
 	public static boolean ALLOW_CHANGE_PASSWORD;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(PASSWORD_CHANGE_CONFIG_FILE);
 		ALLOW_CHANGE_PASSWORD = config.getBoolean("AllowChangePassword", false);

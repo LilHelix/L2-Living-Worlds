@@ -38,7 +38,7 @@ public class CancelReturnConfig
 	public static boolean CANCEL_RETURN_PLAYER_OLYS;
 	public static int TIME_TO_RETURN;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(CANCEL_RETURN_CONFIG_FILE);
 		CANCEL_RETURN_ON = config.getBoolean("CancelReturn", false);

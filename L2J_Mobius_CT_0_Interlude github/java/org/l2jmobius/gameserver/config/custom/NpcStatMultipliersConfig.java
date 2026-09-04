@@ -66,7 +66,7 @@ public class NpcStatMultipliersConfig
 	public static double DEFENDER_AGRRO_RANGE_MULTIPLIER;
 	public static double DEFENDER_CLAN_HELP_RANGE_MULTIPLIER;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(NPC_STAT_MULTIPLIERS_CONFIG_FILE);
 		ENABLE_NPC_STAT_MULTIPLIERS = config.getBoolean("EnableNpcStatMultipliers", false);

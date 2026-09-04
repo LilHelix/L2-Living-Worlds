@@ -39,7 +39,7 @@ public class ConquerableHallSiegeConfig
 	public static int CHS_FAME_AMOUNT;
 	public static int CHS_FAME_FREQUENCY;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(CONQUERABLE_HALL_SIEGE_CONFIG_FILE);
 		CHS_MAX_ATTACKERS = config.getInt("MaxAttackers", 500);

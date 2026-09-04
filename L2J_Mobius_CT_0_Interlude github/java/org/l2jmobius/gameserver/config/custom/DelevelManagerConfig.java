@@ -38,7 +38,7 @@ public class DelevelManagerConfig
 	public static int DELEVEL_MANAGER_ITEMCOUNT;
 	public static int DELEVEL_MANAGER_MINIMUM_DELEVEL;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(DELEVEL_MANAGER_CONFIG_FILE);
 		DELEVEL_MANAGER_ENABLED = config.getBoolean("Enabled", false);

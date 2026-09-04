@@ -42,7 +42,7 @@ public class WeddingConfig
 	public static boolean WEDDING_FORMALWEAR;
 	public static int WEDDING_DIVORCE_COSTS;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(WEDDING_CONFIG_FILE);
 		ALLOW_WEDDING = config.getBoolean("AllowWedding", false);

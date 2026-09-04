@@ -34,7 +34,7 @@ public class WalkerBotProtectionConfig
 	// Constants
 	public static boolean L2WALKER_PROTECTION;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(WALKER_BOT_PROTECTION_CONFIG_FILE);
 		L2WALKER_PROTECTION = config.getBoolean("L2WalkerProtection", false);

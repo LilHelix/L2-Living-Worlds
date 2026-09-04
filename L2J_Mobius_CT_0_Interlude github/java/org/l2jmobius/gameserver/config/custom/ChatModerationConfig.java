@@ -34,7 +34,7 @@ public class ChatModerationConfig
 	// Constants
 	public static boolean CHAT_ADMIN;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(CHAT_MODERATION_CONFIG_FILE);
 		CHAT_ADMIN = config.getBoolean("ChatAdmin", true);

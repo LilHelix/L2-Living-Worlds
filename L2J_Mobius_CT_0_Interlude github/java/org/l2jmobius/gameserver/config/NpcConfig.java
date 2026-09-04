@@ -81,7 +81,7 @@ public class NpcConfig
 	public static double PET_HP_REGEN_MULTIPLIER;
 	public static double PET_MP_REGEN_MULTIPLIER;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(NPC_CONFIG_FILE);
 		ANNOUNCE_MAMMON_SPAWN = config.getBoolean("AnnounceMammonSpawn", false);

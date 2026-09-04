@@ -39,7 +39,7 @@ public class NoblessMasterConfig
 	public static int NOBLESS_MASTER_ITEM_COUNT;
 	public static boolean NOBLESS_MASTER_REWARD_TIARA;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(NOBLESS_MASTER_CONFIG_FILE);
 		NOBLESS_MASTER_ENABLED = config.getBoolean("Enabled", false);

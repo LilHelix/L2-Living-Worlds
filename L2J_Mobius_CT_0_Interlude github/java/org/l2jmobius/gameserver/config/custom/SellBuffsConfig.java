@@ -39,7 +39,7 @@ public class SellBuffsConfig
 	public static long SELLBUFF_MAX_PRICE;
 	public static int SELLBUFF_MAX_BUFFS;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(SELL_BUFFS_CONFIG_FILE);
 		SELLBUFF_ENABLED = config.getBoolean("SellBuffEnable", false);

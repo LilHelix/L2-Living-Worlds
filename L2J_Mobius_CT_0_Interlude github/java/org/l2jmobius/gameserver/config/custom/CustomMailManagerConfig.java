@@ -35,7 +35,7 @@ public class CustomMailManagerConfig
 	public static boolean CUSTOM_MAIL_MANAGER_ENABLED;
 	public static int CUSTOM_MAIL_MANAGER_DELAY;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader custom = new ConfigReader(CUSTOM_MAIL_MANAGER_CONFIG_FILE);
 		CUSTOM_MAIL_MANAGER_ENABLED = custom.getBoolean("CustomMailManagerEnabled", false);

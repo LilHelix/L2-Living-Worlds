@@ -37,7 +37,7 @@ public class StartingLocationConfig
 	public static int CUSTOM_STARTING_LOC_Y;
 	public static int CUSTOM_STARTING_LOC_Z;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(STARTING_LOCATION_CONFIG_FILE);
 		CUSTOM_STARTING_LOC = config.getBoolean("CustomStartingLocation", false);

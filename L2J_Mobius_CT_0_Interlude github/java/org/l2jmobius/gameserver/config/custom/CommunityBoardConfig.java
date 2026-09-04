@@ -59,7 +59,7 @@ public class CommunityBoardConfig
 	public static Set<Integer> COMMUNITY_AVAILABLE_BUFFS;
 	public static Map<String, Location> COMMUNITY_AVAILABLE_TELEPORTS;
 	
-	public static void load()
+	public static void load(String baseConfigPath)
 	{
 		final ConfigReader config = new ConfigReader(COMMUNITY_BOARD_CONFIG_FILE);
 		CUSTOM_CB_ENABLED = config.getBoolean("CustomCommunityBoard", false);
