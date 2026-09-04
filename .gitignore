@@ -12,3 +12,6 @@ __pycache__/
 .env*
 !.env.example
 /L2J_Mobius_CT_0_Interlude github/dist/launcher/.processes.json*
+
+.idea
+/out

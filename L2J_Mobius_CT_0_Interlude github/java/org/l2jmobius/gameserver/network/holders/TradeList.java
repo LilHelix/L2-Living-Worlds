@@ -31,6 +31,10 @@ import org.l2jmobius.gameserver.managers.PunishmentManager;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Player;
+import org.l2jmobius.gameserver.model.events.EventDispatcher;
+import org.l2jmobius.gameserver.model.events.EventType;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.trade.OnPlayerTradeCancel;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.trade.OnPlayerTradeFinish;
 import org.l2jmobius.gameserver.model.item.ItemTemplate;
 import org.l2jmobius.gameserver.model.item.enums.ItemProcessType;
 import org.l2jmobius.gameserver.model.item.instance.Item;
@@ -622,6 +626,13 @@ public class TradeList
 		// Finish the trade
 		partnerList.getOwner().onTradeFinish(success);
 		_owner.onTradeFinish(success);
+		if (EventDispatcher.getInstance().hasListener(EventType.ON_PLAYER_TRADE_FINISH, partnerList.getOwner()))
+		{
+			EventDispatcher.getInstance().notifyEventAsync(
+					new OnPlayerTradeFinish(partnerList.getOwner(), partnerList.getPartner()),
+					partnerList.getOwner()
+			);
+		}
 	}
 	
 	/**

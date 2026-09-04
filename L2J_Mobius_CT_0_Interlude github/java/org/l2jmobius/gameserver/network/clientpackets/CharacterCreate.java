@@ -231,7 +231,13 @@ public class CharacterCreate extends ClientPacket
 				}
 			}
 			
-			newChar = Player.create(template, client.getAccountName(), _name, new PlayerAppearance(_face, _hairColor, _hairStyle, _isFemale));
+			newChar = Player.create(
+					/* template = */ template,
+					/* accountName = */ client.getAccountName(),
+					/* name = */ _name,
+					/* app = */ new PlayerAppearance(_face, _hairColor, _hairStyle, _isFemale),
+					/* isBuddyBot = */ false
+			);
 		}
 		
 		// HP and MP are at maximum and CP is zero by default.

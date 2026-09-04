@@ -32,12 +32,15 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Predicate;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.l2jmobius.commons.threads.ThreadPool;
 import org.l2jmobius.commons.util.Rnd;
@@ -52,6 +55,14 @@ import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Creature;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.instance.Monster;
+import org.l2jmobius.gameserver.model.events.Containers;
+import org.l2jmobius.gameserver.model.events.EventType;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.inventory.OnPlayerItemAdd;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.inventory.OnPlayerItemTransfer;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.trade.OnPlayerTradeCancel;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.trade.OnPlayerTradeFinish;
+import org.l2jmobius.gameserver.model.events.holders.actor.player.trade.OnPlayerTradeStart;
+import org.l2jmobius.gameserver.model.events.listeners.ConsumerEventListener;
 import org.l2jmobius.gameserver.model.groups.Party;
 import org.l2jmobius.gameserver.model.groups.PartyDistributionType;
 import org.l2jmobius.gameserver.model.groups.PartyMessageType;
@@ -409,6 +420,9 @@ public class PhantomPartyManager
 		1015 // Battle Heal
 	};
 	private static final int BIG_HEAL_DEFICIT = 35; // missing HP% at/above which the strong heal is worth its MP
+    /** AOE radius for phantoms to check for mobs with their respective spoiledByObjectId */
+    private static final int DEFAULT_AOE_SWEEP_RADIUS = 600;
+    private static final int SWEEPER_SKILL_ID = 42;
 
 	/** Per-member state. */
 	private static class Member
@@ -472,6 +486,14 @@ public class PhantomPartyManager
 		boolean songsLookedUp;
 		boolean songsRequested; // explicit "sing"/"dance" order: run the rotation now even out of combat
 		Skill pendingSong; // explicit "<song/dance> by name" order (SINGER/DANCER): cast that exact one next tick, even if it's outside the auto rotation
+		SpoilBehavior spoilBehavior;
+		Skill sweeper;
+		boolean scavengerKitLookedUp;
+		boolean fieldSweepingInProcess;
+		Monster nextMonsterCorpseToSweep;
+		List<Monster> targetsToSweep;
+		Map<Integer, Integer> lootingSessionItems; // Map of Item.getObjectId() to Item.getCount()
+		TradingState tradingState = TradingState.NOT_TRADING;
 		Skill survival; // lazy (TANK): Ultimate Defense, hand-cast at low HP (parked out of the auto-buff loop)
 		boolean survivalLookedUp;
 		Skill cc; // lazy (NUKER): Sleep / Dryad Root for a loose add
@@ -509,6 +531,35 @@ public class PhantomPartyManager
 		{
 			return role.isSupport();
 		}
+
+        public void addItemsToLootingSession(Item item)
+		{
+            if (lootingSessionItems == null)
+			{
+				lootingSessionItems = new ConcurrentHashMap<>();
+			}
+			lootingSessionItems.put(item.getObjectId(), item.getCount());
+        }
+
+        public void removeItemsFromLootingSession(Item item)
+		{
+            if (lootingSessionItems == null || lootingSessionItems.isEmpty() || !lootingSessionItems.containsKey(item.getObjectId()))
+			{
+				return;
+			}
+			if (item.getCount() == 0)
+			{
+				lootingSessionItems.remove(item.getObjectId());
+			}
+			else
+			{
+				lootingSessionItems.put(item.getObjectId(), item.getCount());
+			}
+        }
+	}
+
+	private enum SpoilBehavior {
+		SPOIL_ON_ASSIST;
 	}
 
 	/**
@@ -548,7 +599,17 @@ public class PhantomPartyManager
 		}
 	}
 
+	private enum TradingState
+	{
+		NOT_TRADING,
+		IS_TRADING,
+		FINISHED,
+		CANCELLED;
+	}
+
 	private final ConcurrentHashMap<Integer, Member> _members = new ConcurrentHashMap<>();
+	private CopyOnWriteArrayList<Member> _pendingTrades = new CopyOnWriteArrayList<>();
+	private Member _currentTrading;
 	private final ConcurrentHashMap<Integer, PartyMood> _moods = new ConcurrentHashMap<>();
 	private final ConcurrentHashMap<Integer, Camp> _camps = new ConcurrentHashMap<>();
 	// Raid pull control: "all attack" force-releases an owner's party, but normal tank release is per raid mob/add.
@@ -567,8 +628,53 @@ public class PhantomPartyManager
 	private final Set<Integer> _healedThisTick = ConcurrentHashMap.newKeySet();
 	private boolean _ticking = false;
 
+	private final ConsumerEventListener addItemEventListener =
+			new ConsumerEventListener(
+					Containers.Players(),
+					EventType.ON_PLAYER_ITEM_ADD,
+					(OnPlayerItemAdd event) -> onPlayerItemAdd(event),
+					this
+			);
+
+	private final ConsumerEventListener transferItemEventListener =
+			new ConsumerEventListener(
+					Containers.Players(),
+					EventType.ON_PLAYER_ITEM_TRANSFER,
+					(OnPlayerItemTransfer event) -> onPlayerItemTransfer(event),
+					this
+			);
+
+	private final ConsumerEventListener onPlayerTradeStartListener =
+			new ConsumerEventListener(
+					Containers.Players(),
+					EventType.ON_PLAYER_TRADE_START,
+					(OnPlayerTradeStart event) -> onPlayerTradeStart(event),
+					this
+			);
+
+	private final ConsumerEventListener onPlayerTradeFinishListener =
+			new ConsumerEventListener(
+					Containers.Players(),
+					EventType.ON_PLAYER_TRADE_FINISH,
+					(OnPlayerTradeFinish event) -> onPlayerTradeFinish(event),
+					this
+			);
+
+	private final ConsumerEventListener onPlayerTradeCancelListener =
+			new ConsumerEventListener(
+					Containers.Players(),
+					EventType.ON_PLAYER_TRADE_CANCEL,
+					(OnPlayerTradeCancel event) -> onPlayerTradeCancel(event),
+					this
+			);
+
 	protected PhantomPartyManager()
 	{
+		Containers.Players().addListener(addItemEventListener);
+		Containers.Players().addListener(transferItemEventListener);
+		Containers.Players().addListener(onPlayerTradeStartListener);
+		Containers.Players().addListener(onPlayerTradeFinishListener);
+		Containers.Players().addListener(onPlayerTradeCancelListener);
 	}
 
 	// ===== Recruitment =====
@@ -625,6 +731,46 @@ public class PhantomPartyManager
 			}
 		}
 		return cap - incoming;
+	}
+
+	private void onPlayerItemAdd(OnPlayerItemAdd event)
+	{
+		Member npc = _members.get(event.getPlayer().getObjectId());
+		if (npc != null) {
+			npc.addItemsToLootingSession(event.getItem());
+		}
+	}
+
+	private void onPlayerItemTransfer(OnPlayerItemTransfer event)
+	{
+		Member npc = _members.get(event.getPlayer().getObjectId());
+		if (npc != null) {
+			npc.removeItemsFromLootingSession(event.getItem());
+		}
+	}
+
+	private void onPlayerTradeStart(OnPlayerTradeStart event)
+	{
+		Member npc = _members.get(event.getSender().getObjectId());
+		if (npc != null) {
+			npc.tradingState = TradingState.IS_TRADING;
+		}
+	}
+
+	private void onPlayerTradeFinish(OnPlayerTradeFinish event)
+	{
+		Member npc = _members.get(event.getSender().getObjectId());
+		if (npc != null) {
+			npc.tradingState = TradingState.FINISHED;
+		}
+	}
+
+	private void onPlayerTradeCancel(OnPlayerTradeCancel event)
+	{
+		Member npc = _members.get(event.getReceiver().getObjectId());
+		if (npc != null) {
+			npc.tradingState = TradingState.CANCELLED;
+		}
 	}
 
 	/**
@@ -883,11 +1029,18 @@ public class PhantomPartyManager
 		final boolean addressed = !named.isEmpty();
 		final List<Member> targets = addressed ? named : mine;
 		boolean matched = false;
-		for (Member state : targets)
+		if (tryPartyCommand(speaker, message))
 		{
-			if (tryCommand(state, speaker, message, addressed))
+			matched = true;
+		}
+		if (!matched)
+		{
+			for (Member state : targets)
 			{
-				matched = true;
+				if (tryCommand(state, speaker, message, addressed))
+				{
+					matched = true;
+				}
 			}
 		}
 		if (matched)
@@ -962,6 +1115,46 @@ public class PhantomPartyManager
 	}
 
 	/**
+	 * Deterministic parser of commands to the entire party
+	 *
+	 * @return {@code true} if the line matched a known command (and was acted on); {@code false} for free-form
+	 *         text the caller should route the call to each party member
+	 */
+	private boolean tryPartyCommand(Player owner, String message)
+	{
+		if (!owner.isInParty())
+		{
+			return false;
+		}
+
+		final String text = message.toLowerCase().trim();
+
+		if (containsAny(text, "party return loot", "party hand over loot"))
+		{
+			_pendingTrades = new CopyOnWriteArrayList<>();
+			_members.values().stream()
+					.filter(member -> member.lootingSessionItems != null && !member.lootingSessionItems.isEmpty())
+					.collect(Collectors.toCollection(() -> _pendingTrades));
+			if (_pendingTrades.isEmpty()) {
+				return false;
+			}
+			// first trade can and should be started eagerly
+			_currentTrading = _pendingTrades.getFirst();
+			if (_currentTrading.tradingState == TradingState.NOT_TRADING)
+			{
+				PhantomExchangeManager.newInstance().runTrade(
+						_currentTrading.npc,
+						owner,
+						_currentTrading.lootingSessionItems
+				);
+			}
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
 	 * Deterministic group-command parser shared by whisper and party chat (works with the brain offline).
 	 * @param addressed {@code true} if this member was specifically addressed (whispered to, or named in the party
 	 *            line) - required for the "make you the puller" order so a bare party-wide "pull" doesn't hit everyone
@@ -1020,6 +1213,16 @@ public class PhantomPartyManager
 		{
 			state.songsRequested = true;
 			deliver(state, (state.role == PartyRole.SINGER) ? "singing" : "dancing");
+			return true;
+		}
+
+		if (((state.role == PartyRole.BOUNTY_HUNTER) && containsAny(text, "spoil on assist")))
+        {
+			state.spoilBehavior = SpoilBehavior.SPOIL_ON_ASSIST;
+			stopCamp(owner);
+			setFree(state, false);
+			state.following = true;
+			deliver(state, "got you boss, spoiling your targets!");
 			return true;
 		}
 
@@ -1184,6 +1387,26 @@ public class PhantomPartyManager
 		if (containsAny(text, "status", "hp?", "mp?", "you ok", "u ok"))
 		{
 			deliver(state, "hp " + state.npc.getCurrentHpPercent() + "% / mp " + state.npc.getCurrentMpPercent() + "%");
+			return true;
+		}
+
+		if (containsAny(text, "return loot", "hand over loot", "hand over loot"))
+		{
+			Map<Integer, Integer> spoils = state.lootingSessionItems;
+			if (spoils.isEmpty()) {
+				deliver(state, "nothing to hand over yet, how about a few more mobs then?");
+				return true;
+			}
+			if (addressed && state.tradingState == TradingState.NOT_TRADING)
+			{
+				_currentTrading = state;
+				deliver(state, "here's your loot mate, have fun with it!");
+				PhantomExchangeManager.newInstance().runTrade(
+						state.npc,
+						owner,
+						spoils
+				);
+			}
 			return true;
 		}
 
@@ -2069,6 +2292,41 @@ public class PhantomPartyManager
 			return true;
 		}
 
+		if (_currentTrading == state) {
+			switch (state.tradingState) {
+				case IS_TRADING -> {
+					return true;
+				}
+				case FINISHED -> {
+					state.lootingSessionItems = null;
+					deliver(state, "thank you for your time boss o7");
+					state.tradingState = TradingState.NOT_TRADING;
+					if (_pendingTrades.isEmpty()) {
+						_currentTrading = null;
+					} else {
+						_pendingTrades.removeFirst();
+						_currentTrading = _pendingTrades.isEmpty() ? null : _pendingTrades.getFirst();
+					}
+					if (_currentTrading != null) {
+						if (_currentTrading.tradingState == TradingState.NOT_TRADING)
+						{
+							PhantomExchangeManager.newInstance().runTrade(
+									_currentTrading.npc,
+									owner,
+									_currentTrading.lootingSessionItems
+							);
+						}
+					}
+					return true;
+				}
+				case CANCELLED -> {
+					deliver(state, "not now, got you, back to the grind");
+					state.tradingState = TradingState.NOT_TRADING;
+					return true;
+				}
+			}
+		}
+
 		if (state.isSupport())
 		{
 			supportTick(state, now);
@@ -2190,6 +2448,12 @@ public class PhantomPartyManager
 			{
 				return; // out of MP for even a bow shot - hold fire and let it regenerate
 			}
+		}
+
+		if (state.role == PartyRole.BOUNTY_HUNTER && state.fieldSweepingInProcess)
+		{
+			runSweepOnSelectedCorpses(state);
+			return;
 		}
 
 		// Charge classes bank their sonic/force energy while settled and out of combat, so a pull OPENS prepared
@@ -2327,6 +2591,14 @@ public class PhantomPartyManager
 			{
 				return;
 			}
+
+			// if the battle is over, then it's probably a good time to look for spoiled mobs and spoil them
+			if (focus == null) {
+				if ((state.role == PartyRole.BOUNTY_HUNTER) && checkForSweepableMobs(state))
+				{
+					return;
+				}
+			}
 			// Nothing to assist (or a nuker that just ran dry): a caster low on MP sits to recover when safe;
 			// otherwise stick with the leader.
 			if (restForMp(state))
@@ -2411,6 +2683,71 @@ public class PhantomPartyManager
 					PhantomManager.getInstance().setRecruitHunting(npc, true); // resume hunting once back near the party
 				}
 			}, 4000);
+		}
+	}
+
+	private boolean checkForSweepableMobs(Member state)
+	{
+		final Player npc = state.npc;
+
+		if (!state.scavengerKitLookedUp) {
+			state.sweeper = npc.getKnownSkill(SWEEPER_SKILL_ID);
+			state.scavengerKitLookedUp = true;
+		}
+
+		if (!state.fieldSweepingInProcess) {
+			List<Monster> sweepableEntities =
+					World.getInstance().getVisibleObjectsInRange(npc, Monster.class, DEFAULT_AOE_SWEEP_RADIUS)
+							.stream()
+							.filter((monster) -> monster.isDead() && monster.getSpoilerObjectId() == npc.getObjectId())
+							.collect(Collectors.toCollection(ArrayList::new));
+
+			state.fieldSweepingInProcess = !sweepableEntities.isEmpty();
+			if (state.fieldSweepingInProcess) {
+				state.targetsToSweep = sweepableEntities;
+			}
+			return state.fieldSweepingInProcess;
+		}
+
+		return false;
+	}
+
+	private void runSweepOnSelectedCorpses(Member state)
+	{
+		Player npc = state.npc;
+		Optional<Monster> closestMonsterCorpseOptional = state.targetsToSweep
+                .stream()
+				.min((monster1, monster2) -> {
+                    double distanceToPlayer1 = monster1.calculateDistance2D(npc);
+                    double distanceToPlayer2 = monster2.calculateDistance2D(npc);
+
+                    return Double.compare(distanceToPlayer1, distanceToPlayer2);
+                });
+
+		 if (closestMonsterCorpseOptional.isPresent())
+		 {
+			 Monster closestMonsterCorpse = closestMonsterCorpseOptional.get();
+			 if (state.nextMonsterCorpseToSweep == closestMonsterCorpse)
+			 {
+				 npc.setTarget(closestMonsterCorpse);
+				 npc.setRunning();
+				 npc.getAI().setIntention(Intention.MOVE_TO, closestMonsterCorpse.getLocation());
+
+				 if (npc.calculateDistance2D(closestMonsterCorpse) <= state.sweeper.getCastRange())
+				 {
+					 npc.getAI().setIntention(Intention.IDLE);
+					 npc.doCast(state.sweeper);
+					 state.targetsToSweep.remove(closestMonsterCorpse);
+					 state.nextMonsterCorpseToSweep = null;
+				 }
+			 } else
+			 {
+				 state.nextMonsterCorpseToSweep = closestMonsterCorpse;
+			 }
+		} else
+		{
+			state.fieldSweepingInProcess = false;
+			state.nextMonsterCorpseToSweep = null;
 		}
 	}
 
@@ -4271,7 +4608,7 @@ public class PhantomPartyManager
 				protector = m.npc;
 				break;
 			}
-			if (((m.role == PartyRole.WARRIOR) || (m.role == PartyRole.DAGGER) || (m.role == PartyRole.MONK)) && (distance < bestDistance))
+			if (((m.role == PartyRole.WARRIOR) || (m.role == PartyRole.DAGGER) || (m.role == PartyRole.MONK) || (m.role == PartyRole.BOUNTY_HUNTER)) && (distance < bestDistance))
 			{
 				bestDistance = distance;
 				protector = m.npc;

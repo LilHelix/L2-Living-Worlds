@@ -40,6 +40,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Predicate;
 import java.util.logging.Logger;
 
+import org.l2jmobius.gameserver.config.custom.FakePlayersConfig;
 import org.w3c.dom.Document;
 
 import org.l2jmobius.commons.database.DatabaseFactory;
@@ -49,7 +50,6 @@ import org.l2jmobius.commons.util.Rnd;
 import org.l2jmobius.gameserver.ai.Action;
 import org.l2jmobius.gameserver.ai.Intention;
 import org.l2jmobius.gameserver.config.custom.AutoPlayConfig;
-import org.l2jmobius.gameserver.config.custom.FakePlayersConfig;
 import org.l2jmobius.gameserver.data.sql.CharInfoTable;
 import org.l2jmobius.gameserver.data.xml.ExperienceData;
 import org.l2jmobius.gameserver.data.xml.ItemData;
@@ -315,7 +315,8 @@ public class PhantomManager implements IXmlReader
 		NONE(0),
 		ELDER(30), // Elven Elder - mage buffs, heals, recharge
 		PROPHET(17), // Prophet - fighter buffs (Heal granted)
-		WARCRYER(52); // Warcryer - Orc buffs (Heal granted)
+		WARCRYER(52), // Warcryer - Orc buffs (Heal granted)
+		BOUNTY_HUNTER(55); // Bounty Hunter - spoils stuff for you and shares loot afterwards
 
 		final int classId;
 
@@ -352,6 +353,11 @@ public class PhantomManager implements IXmlReader
 				{
 					return WARCRYER;
 				}
+				case "BUDDY_BOUNTY_HUNTER":
+				case "BOUNTY_HUNTER":
+				{
+					return BOUNTY_HUNTER;
+				}
 				default:
 				{
 					return NONE;
@@ -386,9 +392,10 @@ public class PhantomManager implements IXmlReader
 		DANCER(false, BuddyRole.NONE, ArmorType.HEAVY), // Bladedancer: dual-wield melee that keeps the dances running (Heavy + dual swords is the retail standard)
 		NUKER(true, BuddyRole.NONE, ArmorType.MAGIC),
 		HEALER(true, BuddyRole.ELDER, ArmorType.MAGIC), // Elven Elder kit (heals + recharge + Resurrection, learned naturally from its class tree)
-		BUFFER(true, BuddyRole.PROPHET, ArmorType.MAGIC); // Prophet fighter-buff kit
+		BUFFER(true, BuddyRole.PROPHET, ArmorType.MAGIC), // Prophet fighter-buff kit
+        BOUNTY_HUNTER(false, BuddyRole.NONE, ArmorType.HEAVY); // Bounty Hunter: spoils stuff, shares loot
 
-		final boolean mage;
+        final boolean mage;
 		final BuddyRole supportAs;
 		final ArmorType armor;
 
@@ -501,6 +508,15 @@ public class PhantomManager implements IXmlReader
 				case "khavatari":
 				{
 					return MONK;
+				}
+				case "spoiler":
+				case "spoil":
+				case "scavenger":
+				case "scav":
+				case "bh":
+				case "bounty hunter":
+				{
+					return BOUNTY_HUNTER;
 				}
 				default:
 				{
@@ -655,7 +671,10 @@ public class PhantomManager implements IXmlReader
 		{
 			return PartyRole.MONK;
 		}
-		if (nameHas(name, "scavenger", "bounty", "artisan", "warsmith", "seeker", "maestro")) // Dwarves: blunt/heavy melee, not daggers (despite "hunter"/"seeker" in the names)
+		if (nameHas(name, "scavenger", "bounty", "seeker")) { // Dwarves: blunt/heavy melee, spoil targets, collect with sweep
+			return PartyRole.BOUNTY_HUNTER;
+		}
+		if (nameHas(name, "artisan", "warsmith", "maestro")) // Dwarves: blunt/heavy melee, assist with golems
 		{
 			return PartyRole.WARRIOR;
 		}
@@ -663,7 +682,7 @@ public class PhantomManager implements IXmlReader
 		{
 			return PartyRole.ARCHER;
 		}
-		if (nameHas(name, "hunter", "walker", "adventurer", "rider", "assassin", "rogue", "scavenger", "seeker"))
+		if (nameHas(name, "hunter", "walker", "adventurer", "rider", "assassin", "rogue"))
 		{
 			return PartyRole.DAGGER;
 		}
@@ -1788,7 +1807,7 @@ public class PhantomManager implements IXmlReader
 			(byte) ((hairStyle >= 0) ? Math.min(hairStyle, 2) : Rnd.get(0, 2)), female);
 
 		// Persistent from birth: created straight onto the regular account (no promotion step needed).
-		final Player phantom = Player.create(template, ACCOUNT_NAME_REGULAR, name, appearance);
+		final Player phantom = Player.create(template, ACCOUNT_NAME_REGULAR, name, appearance, true);
 		if (phantom == null)
 		{
 			return "Creation failed (duplicate name / db error?).";
@@ -2013,7 +2032,7 @@ public class PhantomManager implements IXmlReader
 			}
 			else
 			{
-				phantom = Player.create(template, (regular != null) ? ACCOUNT_NAME_REGULAR : ACCOUNT_NAME, (regular != null) ? regular.name : nextName(), appearance);
+				phantom = Player.create(template, (regular != null) ? ACCOUNT_NAME_REGULAR : ACCOUNT_NAME, (regular != null) ? regular.name : nextName(), appearance, true);
 				if (phantom == null)
 				{
 					LOGGER.warning(getClass().getSimpleName() + ": Player.create returned null (duplicate name / db error?).");
@@ -2759,6 +2778,15 @@ public class PhantomManager implements IXmlReader
 			}
 		}
 		// Default fighter weapon. A TANK or SINGER needs a one-handed sword so its shield remains equipped.
+		else if (role == PartyRole.BOUNTY_HUNTER)
+		{
+			final ItemTemplate blunt = bestEquip(grade, item -> (item instanceof Weapon) && (((Weapon) item).getItemType() == WeaponType.BLUNT));
+			if (blunt != null) {
+				return blunt;
+			}
+		}
+		// Sword fallback (and the default melee weapon). A TANK or SINGER needs a ONE-handed sword so its shield fits
+		// the left hand; a two-handed sword would otherwise be unequipped when the shield goes on.
 		final boolean oneHandOnly = (role == PartyRole.TANK) || (role == PartyRole.SINGER);
 		return randomTopEquip(grade, item -> isPhysicalWeapon(item, WeaponType.SWORD) && (!oneHandOnly || (item.getBodyPart() == BodyPart.R_HAND)));
 	}
@@ -3692,7 +3720,7 @@ public class PhantomManager implements IXmlReader
 
 			final boolean female = Rnd.nextBoolean();
 			final PlayerAppearance appearance = new PlayerAppearance((byte) Rnd.get(0, 2), (byte) Rnd.get(0, 3), (byte) Rnd.get(0, 2), female);
-			final Player phantom = Player.create(template, ACCOUNT_NAME, nextName(), appearance);
+			final Player phantom = Player.create(template, ACCOUNT_NAME, nextName(), appearance, true);
 			if (phantom == null)
 			{
 				LOGGER.warning(getClass().getSimpleName() + ": Player.create returned null for party member (duplicate name / db error?).");
