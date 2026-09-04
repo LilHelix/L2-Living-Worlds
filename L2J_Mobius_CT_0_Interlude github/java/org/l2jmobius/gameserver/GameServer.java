@@ -184,7 +184,7 @@ public class GameServer
 		GameServerLaunchArgs gameServerLaunchArgs = GameServerLaunchArgumentsParser.parse();
 
 		// GUI
-		InterfaceConfig.load();
+		InterfaceConfig.load(gameServerLaunchArgs.baseConfigPath());
 		if (InterfaceConfig.ENABLE_GUI)
 		{
 			System.out.println("GameServer: Running in GUI mode.");
@@ -207,10 +207,10 @@ public class GameServer
 		LOGGER.info("=== Living Worlds Server ===");
 		
 		printSection("Database");
-		DatabaseFactory.init();
+		DatabaseFactory.init(gameServerLaunchArgs.baseConfigPath());
 		
 		printSection("ThreadPool");
-		ThreadPool.init();
+		ThreadPool.init(gameServerLaunchArgs.baseConfigPath());
 		
 		// Start game time task manager early
 		GameTimeTaskManager.getInstance();

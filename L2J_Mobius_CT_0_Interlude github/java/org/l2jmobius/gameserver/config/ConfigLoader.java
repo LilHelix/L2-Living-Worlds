@@ -71,8 +71,12 @@ import org.l2jmobius.gameserver.config.custom.WeddingConfig;
  */
 public class ConfigLoader
 {
+	private static String BASE_CONFIG_PATH = "config";
+	
 	public static void init(String baseConfigPath)
 	{
+		BASE_CONFIG_PATH = baseConfigPath;
+		
 		ServerConfig.load(baseConfigPath);
 		
 		// Main configurations.
@@ -133,5 +137,14 @@ public class ConfigLoader
 		WalkerBotProtectionConfig.load(baseConfigPath);
 		WarehouseSortingConfig.load(baseConfigPath);
 		WeddingConfig.load(baseConfigPath);
+	}
+	
+	/**
+	 * Gets the base directory holding the configuration files, as passed to {@link #init(String)}.
+	 * @return the base configuration directory
+	 */
+	public static String getBaseConfigPath()
+	{
+		return BASE_CONFIG_PATH;
 	}
 }
